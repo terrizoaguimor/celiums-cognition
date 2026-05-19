@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# test / coverage
+coverage/
+.vitest/
+
+# corpus is downloaded as a release asset, never tracked (HANDOFF §2.1, §6.6)
+/corpus/*
+!/corpus/.gitkeep
+
+# local data written by the Lite embedded store during dev
+.openclaw/
+*.pglite
+
+# env / secrets — NEVER track (HANDOFF §6.6)
+.env
+.env.*
+!.env.example
+
+# logs / misc
+*.log
+pnpm-debug.log*
+.DS_Store
+.turbo/

@@ -1,0 +1,23 @@
+{
+  "name": "@celiumsai/cognition-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Vendored Celiums Memory cognitive engine — ethics, journal, PAD-circadian, hybrid retrieval, tool handlers, storage adapters (NOT published; lives only in the monorepo per HANDOFF D6)",
+  "license": "Apache-2.0",
+  "author": "Celiums Solutions LLC",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --experimental-strip-types 'tests/**/*.test.ts' 2>/dev/null || echo '(no engine tests yet — arrive in Fase 2)'",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  }
+}

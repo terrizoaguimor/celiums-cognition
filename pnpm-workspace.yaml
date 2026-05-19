@@ -1,0 +1,18 @@
+# Celiums Cognition monorepo — pnpm workspace
+# Dependency graph (HANDOFF §2.2):
+#   hard ─┐
+#         ├──→ shared ──→ engine
+#   lite ─┘
+# engine + shared are "private": true (never published to npm).
+# hard (@celiumsai/cognition) + lite (@celiumsai/cognition-lite) are publishable.
+#
+# `openclaw` is declared by hard/lite ONLY as an optional peerDependency (the
+# host provides it at runtime via ClawHub). autoInstallPeers:false keeps it —
+# and its heavy native deps (sharp/koffi/…) — out of this dev tree. The SDK
+# type dependency is wired explicitly in Fase 3 (see CLAUDE.md deviation log).
+autoInstallPeers: false
+packages:
+  - "packages/engine"
+  - "packages/shared"
+  - "packages/hard"
+  - "packages/lite"

@@ -1,0 +1,19 @@
+@celiumsai/cognition-engine
+Copyright 2026 Celiums Solutions LLC
+Licensed under the Apache License, Version 2.0
+
+This package is VENDORED source: code copied from Celiums Memory v2.0
+(https://github.com/terrizoaguimor/celiums-memory, Apache 2.0) rather than
+consumed as an external npm dependency (HANDOFF D6).
+
+Every vendored .ts file carries this header:
+
+    /*
+     * Copyright 2026 Celiums Solutions LLC
+     * Licensed under the Apache License, Version 2.0
+     * Originally derived from celiums-memory v2.0
+     * (https://github.com/terrizoaguimor/celiums-memory, Apache 2.0)
+     */
+
+Precise file-level provenance (upstream tag + path map) is recorded here
+during Fase 2 vendoring.

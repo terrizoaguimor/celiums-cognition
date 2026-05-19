@@ -1,0 +1,29 @@
+Celiums Cognition
+Copyright 2026 Celiums Solutions LLC
+
+This product includes software developed by Celiums Solutions LLC.
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------------
+Vendored components
+--------------------------------------------------------------------------------
+
+packages/engine/ contains source code derived from Celiums Memory v2.0
+  https://github.com/terrizoaguimor/celiums-memory
+  Copyright 2026 Celiums Solutions LLC
+  Licensed under the Apache License, Version 2.0
+
+  The cognitive engine (ethics, journal, PAD-circadian, hybrid retrieval,
+  tool handlers, storage adapters) is vendored — copied into this repository
+  rather than consumed as an external npm dependency (HANDOFF D6). Each
+  vendored file carries the Apache 2.0 attribution header. See
+  packages/engine/NOTICE for the precise file-level provenance.
+
+--------------------------------------------------------------------------------
+Third-party
+--------------------------------------------------------------------------------
+
+This software is designed to run as a native plugin of OpenClaw
+  https://github.com/openclaw/openclaw  (MIT License)
+OpenClaw is not redistributed by this project; it is a peer dependency.

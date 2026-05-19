@@ -1,0 +1,26 @@
+{
+  "name": "@celiumsai/cognition-shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared OpenClaw plugin adapter for Celiums Cognition — definePluginEntry wiring, config schema, tool curator (NOT published; used by hard + lite)",
+  "license": "Apache-2.0",
+  "author": "Celiums Solutions LLC",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo '(no shared tests yet — arrive in Fase 3)'",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@celiumsai/cognition-engine": "workspace:*"
+  }
+}
