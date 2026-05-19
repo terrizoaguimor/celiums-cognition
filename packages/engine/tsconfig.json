@@ -1,10 +1,54 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "comment": "Self-contained, mirroring the EFFECTIVE config of celiums-memory packages/core (its tsconfig.base.json + core overrides). NOT extended from this repo's strict tsconfig.base.json — the vendored engine (252 files) is written for these exact looser settings; deviating breaks the build. Keeps the engine identical to validated v2.0.0 (HANDOFF §6.7, estructura intacta).",
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist",
-    "tsBuildInfoFile": "dist/.tsbuildinfo"
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+
+    "strict": true,
+    "strictNullChecks": false,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": false,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "exactOptionalPropertyTypes": false,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": false,
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "removeComments": false,
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "experimentalDecorators": false,
+    "emitDecoratorMetadata": false,
+
+    "outDir": "./dist",
+    "rootDir": "./src"
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["dist", "node_modules", "tests"]
+  "include": ["src"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ]
 }

@@ -12,6 +12,7 @@
 # type dependency is wired explicitly in Fase 3 (see CLAUDE.md deviation log).
 autoInstallPeers: false
 packages:
+  - "packages/memory-types"
   - "packages/engine"
   - "packages/shared"
   - "packages/hard"

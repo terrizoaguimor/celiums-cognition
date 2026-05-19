@@ -102,7 +102,39 @@ template HOLDS. Canonical references to imitate:
 4. **`.npmrc` kept** (ignore-scripts/auto-install-peers/strict-peer) for
    non-pnpm-11 / CI compatibility, but pnpm 11.0.4 honors the
    `pnpm-workspace.yaml` equivalents — the workspace yaml is the source of
-   truth here.
+   truth here. **Install command of record: `pnpm install --ignore-scripts`**
+   (the CLI flag IS honored by pnpm 11; `.npmrc ignore-scripts` is not).
+   Keeps install headless/deterministic and dodges the interactive
+   `ERR_PNPM_IGNORED_BUILDS` build-approval gate.
+5. **5th workspace package `packages/memory-types`** — `@celiums/memory-types`
+   is a celiums-memory workspace sibling NOT on npm at v2.0.0 (npm has only
+   0.1.x/0.2.x). Vendored as a private package, resolved via `workspace:*`
+   exactly as upstream → the 19 engine files importing it need ZERO rewrite.
+6. **Engine vendored wholesale, structure intact** (Mario's call 2026-05-19):
+   `celiums-memory/packages/core/src/**` → `packages/engine/src/**` verbatim
+   (252 files), NOT curated into the §2.1 idealized 6-dir layout (would
+   require rewriting hundreds of intra-engine imports — failure mode #1).
+   engine `tsconfig.json` is self-contained mirroring upstream's EFFECTIVE
+   (looser) compiler options — NOT this repo's strict base.
+7. **§2.3-vs-§3.4 conflict resolved — `mcp/atlas-tools.ts` + `lib/atlas.ts`
+   ARE vendored** (NOT excluded). §2.3 says "exclude Atlas server"; that
+   means the SEPARATE `celiums-memory/packages/atlas-server` package (never
+   in our copy scope), NOT `mcp/atlas-tools.ts` which is engine tool-handler
+   code hosting `bloom/cultivate/synthesize/decompose/construct/pollinate`
+   — cognitive primitives the §3.4 curated/`all` surface explicitly requires.
+   atlas-tools.ts imports only engine-internal types (zero SaaS/transport
+   contamination, verified). The `atlas_*` gateway tools come along but are
+   inert by default (dispatcher gates `group:'atlas'` off unless
+   `CELIUMS_ATLAS_KEY`). Only excludes: `quickstart.ts`, `init.ts`,
+   `v1-routes/` (genuine HTTP transport). The Explore-agent
+   "ZERO contamination, exclude atlas" conclusion was WRONG on atlas —
+   caught by the real build, fixed. Lesson: real build/code is authority.
+8. **`better-sqlite3` native binary not built** (optional dep; headless
+   `--ignore-scripts` install). `smoke-sqlite-real.test.ts` +
+   `runtime-bootstrap.test.ts` are resource-gated out in engine
+   `vitest.config.ts` (HANDOFF §6.6: Lite uses pglite/WASM, not
+   better-sqlite3; SqliteAdapter is only the structural base for the
+   Fase-4 pglite adapter). 704 logic tests + typecheck + build all green.
 
 ## 4. NON-NEGOTIABLE RULES (HANDOFF §6)
 
@@ -126,7 +158,9 @@ template HOLDS. Canonical references to imitate:
 - [x] Fase 0b — SDK seams verified vs real code
 - [x] Fase 1 — monorepo scaffold (pnpm install clean, 4 packages build+typecheck green)
 - [x] Fase 1b — this CLAUDE.md (Celiums Memory pipeline encoded)
-- [ ] Fase 2 — vendorize engine from `/Volumes/My Book/Documents/celiums-memory`
+- [x] Fase 2 — engine vendored from celiums-memory v2.0.0 (commit 6012e714):
+      252 files + memory-types pkg, build ESM+DTS green, typecheck clean,
+      704 logic tests pass / 19 skip / 0 fail. 5 workspace packages.
 - [ ] Fase 3 — plugin Hard (shared adapter + hard, manifest, index.ts, compose)
 - [ ] Fase 4 — plugin Lite (pglite-embedded adapter; unblocked)
 - [ ] Fase 5 — READMEs + docs + examples

@@ -2,18 +2,34 @@
 Copyright 2026 Celiums Solutions LLC
 Licensed under the Apache License, Version 2.0
 
-This package is VENDORED source: code copied from Celiums Memory v2.0
-(https://github.com/terrizoaguimor/celiums-memory, Apache 2.0) rather than
-consumed as an external npm dependency (HANDOFF D6).
+VENDORED SOURCE — copied, not an external npm dependency (HANDOFF D6).
 
-Every vendored .ts file carries this header:
+Upstream:   Celiums Memory  (https://github.com/terrizoaguimor/celiums-memory)
+Package:    @celiums/memory  (packages/core)
+Tag:        v2.0.0
+Commit:     6012e714cf50415082d6b2099e40f2f4aa3e206a  (branch oss-clean)
+Vendored:   2026-05-19
 
-    /*
-     * Copyright 2026 Celiums Solutions LLC
-     * Licensed under the Apache License, Version 2.0
-     * Originally derived from celiums-memory v2.0
-     * (https://github.com/terrizoaguimor/celiums-memory, Apache 2.0)
-     */
+Provenance: packages/core/src/** copied into packages/engine/src/**,
+            structure preserved verbatim ("estructura intacta" — Mario,
+            2026-05-19). Every vendored .ts carries the Apache 2.0
+            provenance header (HANDOFF §2.3) above its original SPDX line.
 
-Precise file-level provenance (upstream tag + path map) is recorded here
-during Fase 2 vendoring.
+EXCLUDED from the vendoring (HANDOFF §2.3 — transport / separate products,
+NOT engine):
+  - src/quickstart.ts          HTTP server + OAuth + MCP transport
+  - src/init.ts                CLI onboarding wizard
+  - src/v1-routes/             10 HTTP REST endpoint handlers
+  - src/mcp/atlas-tools.ts     Atlas tool registry (separate product)
+  - src/lib/atlas.ts           Atlas tool gateway (separate product)
+  - 2-line patch in src/mcp/dispatcher.ts dropping the ATLAS_TOOLS import
+    and its registry spread.
+
+The SaaS spine (accounts / entitlement / tool-tiers / tier-classifier /
+Stripe / billing) and federation (#166) are ALREADY ABSENT upstream —
+removed by the OSS refactor #174 on the oss-clean branch. Contamination
+analysis: ZERO engine→excluded import edges (verified 2026-05-19).
+
+Sibling type package @celiums/memory-types is likewise vendored
+(packages/memory-types) and resolved via workspace:* exactly as upstream,
+so the 19 engine files importing it need no rewrite.
