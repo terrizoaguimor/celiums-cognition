@@ -80,6 +80,38 @@ template HOLDS. Canonical references to imitate:
   `openclaw.build.openclawVersion` in package.json (validated by
   `@openclaw/plugin-package-contract`).
 
+### 2b. Fase-3 EXTERNAL-plugin contract (verified 2026-05-19, blueprint)
+
+**`registerTrustedToolPolicy` and `registerCodexAppServerExtensionFactory`
+are BUNDLED-PLUGINS-ONLY** (`types.ts:2732`). We are an EXTERNAL ClawHub
+plugin → the HANDOFF §3.3 ethics-via-`registerTrustedToolPolicy` template
+DOES NOT WORK for us. `registerContextEngine` is an exclusive slot.
+
+Proven external pattern = **`extensions/memory-lancedb`** (HANDOFF §10.1
+reference; it is external-installable and does NOT use
+`registerMemoryCapability` nor `registerTrustedToolPolicy`):
+
+- `packages/shared/src/api.ts` shim = exactly:
+  `export { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";`
+- `export default definePluginEntry({ id, name, description, kind?, configSchema?, register(api) })`
+- Tools: `api.registerTool({ name, label, description, parameters: Type.Object({...}) /*TypeBox*/, async execute(_toolCallId, params) { return { content:[{type:"text",text}], details:{} }; } }, { name })`
+- Auto-recall: `api.on("before_prompt_build", async (event) => …)` →
+  return `{ prependContext: string }` or `undefined`. Guard with a timeout
+  (don't stall agent start). `event.prompt`, `event.messages`.
+- Auto-capture: `api.on("agent_end", async (event, ctx) => …)` — side
+  effect only (void). `event.success`, `event.messages`,
+  `ctx.sessionKey`/`ctx.sessionId`; keep a per-session cursor.
+- Ethics gate (engine.ethics): public hooks, NOT registerTrustedToolPolicy
+  — `api.on("before_tool_call", (event, ctx) ⇒ PluginHookBeforeToolCallResult|void)`
+  and `api.on("before_agent_run", (event{prompt,messages,systemPrompt,
+  senderIsOwner}, ctx) ⇒ InputGateDecision|void)` (pre-LLM pass/block).
+- Journal: `api.on("agent_end" | "tool_result_persist")`; flush on
+  `api.on("before_compaction")`. Cleanup on `api.on("session_end")`.
+- `api.registerService({ id, start, stop })`, `api.registerCli(...)`,
+  `api.registerCommand(...)`. `kind:"memory"` lives in
+  `openclaw.plugin.json` (deprecated in the runtime entry).
+- Tool param schemas use **TypeBox** (`import { Type } from "typebox"`).
+
 ## 3. DEVIATION LOG (this repo vs HANDOFF — intentional, with reasons)
 
 1. **`pluginApi`/peer = `>=2026.5.18`** not `2026.5.19` — npm stable latest is

@@ -3,16 +3,47 @@
  * Licensed under the Apache License, Version 2.0
  */
 
-// @celiumsai/cognition (Hard) — OpenClaw plugin entry, storage = pg-triple.
-//
-// Fase 1 scaffold placeholder. Fase 3 implements the real entry here
-// following the verified SDK contract (definePluginEntry from
-// "openclaw/plugin-sdk/plugin-entry"; canonical reference:
-// openclaw/extensions/memory-core + memory-lancedb). Also adds in Fase 3:
-//   openclaw.plugin.json   manifest (kind: "memory")
-//   src/setup.ts           docker-compose orchestrator
-//   src/compose/docker-compose.yml
-// (HANDOFF §2.1, §3, §5 Fase 3).
+// @celiumsai/cognition (Hard) — OpenClaw plugin entry, storage = pg-triple
+// (Postgres 17 + pgvector, Qdrant, Valkey). Provision the local stack with
+// `pnpm celiums-cognition setup` (src/setup.ts → docker compose).
 
-export const COGNITION_HARD_SCAFFOLD = true as const;
-export const STORAGE = "pg-triple" as const;
+import { createCognitionPlugin, withEditionProps } from "@celiumsai/cognition-shared";
+
+const HARD_PROPS = {
+  database: {
+    type: "object",
+    additionalProperties: false,
+    properties: { endpoint: { type: "string", default: "localhost:5432" } },
+  },
+};
+const HARD_UI = {
+  "database.endpoint": { label: "Postgres endpoint", placeholder: "localhost:5432" },
+};
+
+const { schema, uiHints } = withEditionProps(HARD_PROPS, HARD_UI);
+
+export default createCognitionPlugin({
+  id: "celiums-cognition",
+  name: "Celiums Cognition",
+  description:
+    "Persistent emotional memory for OpenClaw — Hard (Postgres + Qdrant + Valkey).",
+  configSchema: { schema, uiHints },
+  resolveEngineConfig: () => {
+    // Hard = full triple-store. Endpoints come from env (defaults match the
+    // bundled docker-compose service ports). Presence of databaseUrl/qdrantUrl
+    // makes the engine pick MemoryStore (PG+Qdrant+Valkey) — verified
+    // createMemoryEngine() auto-detection.
+    const databaseUrl =
+      process.env.CELIUMS_DATABASE_URL ??
+      "postgresql://celiums:celiums@localhost:5432/celiums_memory";
+    const qdrantUrl = process.env.CELIUMS_QDRANT_URL ?? "http://localhost:6333";
+    const valkeyUrl = process.env.CELIUMS_VALKEY_URL ?? "redis://localhost:6379";
+    return {
+      databaseUrl,
+      qdrantUrl,
+      valkeyUrl,
+      qdrantApiKey: process.env.CELIUMS_QDRANT_API_KEY,
+      personality: "celiums",
+    } as never;
+  },
+});

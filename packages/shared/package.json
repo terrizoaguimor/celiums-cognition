@@ -17,10 +17,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "echo '(no shared tests yet — arrive in Fase 3)'",
+    "test": "echo '(no shared tests yet — covered by hard/lite E2E smoke)'",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@celiumsai/cognition-engine": "workspace:*"
+  },
+  "devDependencies": {
+    "openclaw": "2026.5.19-beta.1"
   }
 }

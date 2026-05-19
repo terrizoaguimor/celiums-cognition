@@ -3,12 +3,22 @@
  * Licensed under the Apache License, Version 2.0
  */
 
-// @celiumsai/cognition-shared — code shared between the Hard and Lite plugins.
-//
-// Fase 1 scaffold placeholder. Fase 3 fills this with:
-//   plugin-adapter/  definePluginEntry wiring + lifecycle hooks
-//   config-schema/   JSON Schema + uiHints shared by both editions
-//   tool-curator/    curated 8-tool surface vs exposedTools: "all"
-// (HANDOFF §2.1).
+// @celiumsai/cognition-shared — public surface used by the Hard and Lite
+// editions to stand up the OpenClaw plugin.
 
-export const COGNITION_SHARED_SCAFFOLD = true as const;
+export { createCognitionPlugin, type EditionOptions } from "./plugin-adapter/index.js";
+export {
+  BASE_CONFIG_SCHEMA,
+  BASE_UI_HINTS,
+  DEFAULT_TRIVIAL_SKIP_REGEX,
+  parseConfig,
+  withEditionProps,
+  type CognitionConfig,
+  type ExposedTools,
+} from "./config-schema/index.js";
+export {
+  CURATED_TOOL_NAMES,
+  selectTools,
+  type EngineToolLike,
+} from "./tool-curator/index.js";
+export { definePluginEntry, type OpenClawPluginApi } from "./api.js";

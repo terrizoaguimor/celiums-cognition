@@ -8,7 +8,9 @@
   "homepage": "https://github.com/celiumssolutions/celiums-cognition",
   "keywords": ["openclaw", "openclaw-plugin", "memory", "celiums", "clawhub"],
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "bin": {
+    "celiums-cognition": "./dist/setup.js"
+  },
   "files": [
     "dist",
     "openclaw.plugin.json",
@@ -19,31 +21,49 @@
     "access": "public"
   },
   "openclaw": {
-    "extensions": [
-      "./dist/index.js"
-    ],
-    "compat": {
-      "pluginApi": ">=2026.5.18"
-    },
-    "build": {
-      "openclawVersion": "2026.5.19"
-    }
+    "extensions": ["./dist/index.js"],
+    "compat": { "pluginApi": ">=2026.5.18" },
+    "build": { "openclawVersion": "2026.5.19" }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsup && cp -R src/compose dist/compose",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "echo '(no hard tests yet — arrive in Fase 3)'",
+    "test": "echo '(hard E2E smoke is run against a live OpenClaw — see docs)'",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@celiumsai/cognition-shared": "workspace:*"
+    "@celiumsai/cognition-shared": "workspace:*",
+    "@celiums/types": "^0.1.1",
+    "@langchain/anthropic": "^1.3.28",
+    "@langchain/aws": "^1.3.5",
+    "@langchain/core": "^1.1.44",
+    "@langchain/deepseek": "^1.0.25",
+    "@langchain/google-genai": "^2.1.28",
+    "@langchain/google-vertexai": "^2.1.28",
+    "@langchain/mistralai": "^1.0.8",
+    "@langchain/openai": "^1.4.5",
+    "@langchain/xai": "^1.3.17",
+    "@qdrant/js-client-rest": "^1.17.0",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
+    "cohere-ai": "^8.0.0",
+    "ioredis": "^5.10.1",
+    "jose": "^5.10.0",
+    "maxmind": "^4.3.29",
+    "ollama": "^0.5.18",
+    "pg": "^8.20.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.10.0"
   },
   "peerDependencies": {
     "openclaw": ">=2026.5.18"
   },
   "peerDependenciesMeta": {
-    "openclaw": {
-      "optional": true
-    }
+    "openclaw": { "optional": true }
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
   }
 }

@@ -1,0 +1,82 @@
+{
+  "id": "celiums-cognition",
+  "kind": "memory",
+  "name": "Celiums Cognition",
+  "description": "Persistent emotional memory for OpenClaw — ethics, journal, PAD-circadian, hybrid retrieval (Hard: Postgres + Qdrant + Valkey).",
+  "activation": {
+    "onStartup": false
+  },
+  "contracts": {
+    "tools": [
+      "recall",
+      "remember",
+      "forage",
+      "sense",
+      "journal_write",
+      "journal_recall",
+      "ethics_trace",
+      "map_network"
+    ]
+  },
+  "configSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "agentId": { "type": "string", "default": "main" },
+      "userId": { "type": "string" },
+      "ethics": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "strictMode": { "type": "boolean", "default": false }
+        }
+      },
+      "journal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "enabled": { "type": "boolean", "default": true } }
+      },
+      "autoRecall": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "trivialSkipRegex": { "type": "string", "default": "^(ok|si|no|gracias)[\\s.!?]*$" }
+        }
+      },
+      "autoCapture": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "minImportance": { "type": "number", "default": 0.3 }
+        }
+      },
+      "dreaming": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "enabled": { "type": "boolean", "default": false } }
+      },
+      "exposedTools": {
+        "type": "string",
+        "enum": ["curated", "all"],
+        "default": "curated"
+      },
+      "database": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "endpoint": { "type": "string", "default": "localhost:5432" }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "userId": { "label": "User ID", "placeholder": "e.g. mario" },
+    "ethics.strictMode": { "label": "Strict ethics mode", "advanced": true },
+    "exposedTools": { "label": "Tool surface", "help": "curated = 8 essential tools, all = 50+ tools" },
+    "database.endpoint": { "label": "Postgres endpoint", "placeholder": "localhost:5432" }
+  }
+}
