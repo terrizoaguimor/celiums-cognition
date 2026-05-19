@@ -193,7 +193,11 @@ reference; it is external-installable and does NOT use
 - [x] Fase 2 — engine vendored from celiums-memory v2.0.0 (commit 6012e714):
       252 files + memory-types pkg, build ESM+DTS green, typecheck clean,
       704 logic tests pass / 19 skip / 0 fail. 5 workspace packages.
-- [ ] Fase 3 — plugin Hard (shared adapter + hard, manifest, index.ts, compose)
+- [~] Fase 3 — plugin Hard BUILT (commit d492e90): shared adapter (verified
+      memory-lancedb pattern) + hard (manifest, entry, compose, setup),
+      tsup bundles private pkgs into dist/index.js (474K), externals
+      openclaw + third-party. 5 pkgs build green. **E2E smoke PENDING**
+      (live OpenClaw on DO nyc1 VPS — in progress).
 - [ ] Fase 4 — plugin Lite (pglite-embedded adapter; unblocked)
 - [ ] Fase 5 — READMEs + docs + examples
 - [ ] Fase 6 — CI + release prep (ClawHub dry-run, re-verify compat)

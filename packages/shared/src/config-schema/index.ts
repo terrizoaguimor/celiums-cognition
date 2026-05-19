@@ -27,8 +27,12 @@ export interface CognitionConfig {
 
 export const DEFAULT_TRIVIAL_SKIP_REGEX = "^(ok|si|no|gracias)[\\s.!?]*$";
 
+// NOTE: no `$schema` key. OpenClaw's config validator (AJV) does not register
+// the draft-2020-12 meta-schema and throws "no schema with key or ref
+// https://json-schema.org/draft/2020-12/schema", breaking plugin load. The
+// real memory-core manifest also omits it. (HANDOFF §3.2 example was wrong;
+// caught by the DO nyc1 E2E 2026-05-19.)
 export const BASE_CONFIG_SCHEMA = {
-  $schema: "https://json-schema.org/draft/2020-12/schema",
   type: "object",
   additionalProperties: false,
   properties: {
