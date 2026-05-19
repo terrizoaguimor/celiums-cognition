@@ -161,6 +161,21 @@ reference; it is external-installable and does NOT use
    `v1-routes/` (genuine HTTP transport). The Explore-agent
    "ZERO contamination, exclude atlas" conclusion was WRONG on atlas —
    caught by the real build, fixed. Lesson: real build/code is authority.
+9. **E2E findings (DO nyc1, OpenClaw 2026.5.19-beta.1, commit f39fb17):**
+   plugin loads + `enabled` in real OpenClaw. (a) NEVER set
+   `$schema:".../draft/2020-12/schema"` in configSchema — OpenClaw's AJV
+   throws "no schema with key or ref" → "Could not start the CLI";
+   memory-core omits it (HANDOFF §3.2 example was wrong). (b) Publishable
+   packaging: private workspace pkgs go in `devDependencies` (tsup bundles
+   via noExternal); engine third-party deps go in the publishable
+   package's `dependencies`; `external openclaw`. (c) **OPEN STRATEGIC
+   BLOCKER**: OpenClaw's dangerous-code scanner blocks the bundled plugin
+   (engine dynamic `import()` + env+network LLM/Qdrant = "possible
+   credential harvesting"); only `--dangerously-force-unsafe-install`
+   bypasses (gateway re-applies at load). Conflicts with §1.3 "easy to
+   adopt" — pending Mario's call (reduce dyn-imports / upstream Peter
+   trusted-publisher / unbundle engine / document flag).
+
 8. **`better-sqlite3` native binary not built** (optional dep; headless
    `--ignore-scripts` install). `smoke-sqlite-real.test.ts` +
    `runtime-bootstrap.test.ts` are resource-gated out in engine

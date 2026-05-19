@@ -20,7 +20,9 @@ import {
   type MemoryEngineWithStore,
 } from "@celiumsai/cognition-engine";
 import { parseConfig, type CognitionConfig } from "../config-schema/index.js";
-import { selectTools, type EngineToolLike } from "../tool-curator/index.js";
+import { selectTools, CURATED_TOOL_NAMES, type EngineToolLike } from "../tool-curator/index.js";
+
+const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
 /** Per-edition wiring supplied by packages/hard and packages/lite. */
 export interface EditionOptions {
@@ -141,7 +143,12 @@ export function createCognitionPlugin(edition: EditionOptions) {
               }
             },
           } as never,
-          { name: tool.definition.name },
+          // Curated tools are required; the rest (only registered when
+          // exposedTools="all") are opt-in, matching toolMetadata.optional
+          // in the manifest (official guide: building-plugins.md).
+          CURATED_SET.has(tool.definition.name)
+            ? { name: tool.definition.name }
+            : { name: tool.definition.name, optional: true },
         );
       }
 

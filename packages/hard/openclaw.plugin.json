@@ -4,78 +4,343 @@
   "name": "Celiums Cognition",
   "description": "Persistent emotional memory for OpenClaw — ethics, journal, PAD-circadian, hybrid retrieval (Hard: Postgres + Qdrant + Valkey).",
   "activation": {
-    "onStartup": false
+    "onStartup": true
   },
   "contracts": {
     "tools": [
+      "absorb",
+      "atlas_ask",
+      "atlas_chat",
+      "atlas_classify",
+      "atlas_list_models",
+      "atlas_recommend",
+      "bloom",
+      "compact_checkpoint",
+      "construct",
+      "cultivate",
+      "decompose",
+      "ethics_audit",
+      "ethics_lookup",
+      "ethics_trace",
+      "forage",
+      "journal_arc",
+      "journal_dialogue",
+      "journal_introspect",
+      "journal_recall",
+      "journal_recall_secure",
+      "journal_redact_secure",
+      "journal_supersede",
+      "journal_verify_chain",
+      "journal_write",
+      "journal_write_secure",
+      "map_network",
+      "memory_bulk_delete_secure",
+      "memory_delete_secure",
+      "memory_recall_secure",
+      "memory_remember_secure",
+      "memory_update_secure",
+      "pollinate",
+      "profile_publish_secure",
       "recall",
       "remember",
-      "forage",
+      "research_export",
+      "research_finding_add",
+      "research_gap_add",
+      "research_project_continue",
+      "research_project_create",
+      "research_project_list",
+      "research_search",
+      "research_source_add",
+      "research_source_delete",
+      "research_source_list",
+      "research_synthesize",
       "sense",
-      "journal_write",
-      "journal_recall",
-      "ethics_trace",
-      "map_network"
+      "synthesize",
+      "tenant_delete_secure",
+      "tenant_export_secure",
+      "turn_after",
+      "turn_context",
+      "web_search",
+      "write_character_create",
+      "write_continuity_check",
+      "write_export",
+      "write_project_create",
+      "write_project_get",
+      "write_project_list",
+      "write_scene_create",
+      "write_scene_update"
     ]
   },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "agentId": { "type": "string", "default": "main" },
-      "userId": { "type": "string" },
+      "agentId": {
+        "type": "string",
+        "default": "main"
+      },
+      "userId": {
+        "type": "string"
+      },
       "ethics": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean", "default": true },
-          "strictMode": { "type": "boolean", "default": false }
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "strictMode": {
+            "type": "boolean",
+            "default": false
+          }
         }
       },
       "journal": {
         "type": "object",
         "additionalProperties": false,
-        "properties": { "enabled": { "type": "boolean", "default": true } }
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          }
+        }
       },
       "autoRecall": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean", "default": true },
-          "trivialSkipRegex": { "type": "string", "default": "^(ok|si|no|gracias)[\\s.!?]*$" }
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "trivialSkipRegex": {
+            "type": "string",
+            "default": "^(ok|si|no|gracias)[\\s.!?]*$"
+          }
         }
       },
       "autoCapture": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean", "default": true },
-          "minImportance": { "type": "number", "default": 0.3 }
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "minImportance": {
+            "type": "number",
+            "default": 0.3
+          }
         }
       },
       "dreaming": {
         "type": "object",
         "additionalProperties": false,
-        "properties": { "enabled": { "type": "boolean", "default": false } }
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          }
+        }
       },
       "exposedTools": {
         "type": "string",
-        "enum": ["curated", "all"],
+        "enum": [
+          "curated",
+          "all"
+        ],
         "default": "curated"
       },
       "database": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "endpoint": { "type": "string", "default": "localhost:5432" }
+          "endpoint": {
+            "type": "string",
+            "default": "localhost:5432"
+          }
         }
       }
     }
   },
   "uiHints": {
-    "userId": { "label": "User ID", "placeholder": "e.g. mario" },
-    "ethics.strictMode": { "label": "Strict ethics mode", "advanced": true },
-    "exposedTools": { "label": "Tool surface", "help": "curated = 8 essential tools, all = 50+ tools" },
-    "database.endpoint": { "label": "Postgres endpoint", "placeholder": "localhost:5432" }
+    "userId": {
+      "label": "User ID",
+      "placeholder": "e.g. mario"
+    },
+    "ethics.strictMode": {
+      "label": "Strict ethics mode",
+      "advanced": true
+    },
+    "exposedTools": {
+      "label": "Tool surface",
+      "help": "curated = 8 essential tools, all = 50+ tools"
+    },
+    "database.endpoint": {
+      "label": "Postgres endpoint",
+      "placeholder": "localhost:5432"
+    }
+  },
+  "toolMetadata": {
+    "absorb": {
+      "optional": true
+    },
+    "atlas_ask": {
+      "optional": true
+    },
+    "atlas_chat": {
+      "optional": true
+    },
+    "atlas_classify": {
+      "optional": true
+    },
+    "atlas_list_models": {
+      "optional": true
+    },
+    "atlas_recommend": {
+      "optional": true
+    },
+    "bloom": {
+      "optional": true
+    },
+    "compact_checkpoint": {
+      "optional": true
+    },
+    "construct": {
+      "optional": true
+    },
+    "cultivate": {
+      "optional": true
+    },
+    "decompose": {
+      "optional": true
+    },
+    "ethics_audit": {
+      "optional": true
+    },
+    "ethics_lookup": {
+      "optional": true
+    },
+    "journal_arc": {
+      "optional": true
+    },
+    "journal_dialogue": {
+      "optional": true
+    },
+    "journal_introspect": {
+      "optional": true
+    },
+    "journal_recall_secure": {
+      "optional": true
+    },
+    "journal_redact_secure": {
+      "optional": true
+    },
+    "journal_supersede": {
+      "optional": true
+    },
+    "journal_verify_chain": {
+      "optional": true
+    },
+    "journal_write_secure": {
+      "optional": true
+    },
+    "memory_bulk_delete_secure": {
+      "optional": true
+    },
+    "memory_delete_secure": {
+      "optional": true
+    },
+    "memory_recall_secure": {
+      "optional": true
+    },
+    "memory_remember_secure": {
+      "optional": true
+    },
+    "memory_update_secure": {
+      "optional": true
+    },
+    "pollinate": {
+      "optional": true
+    },
+    "profile_publish_secure": {
+      "optional": true
+    },
+    "research_export": {
+      "optional": true
+    },
+    "research_finding_add": {
+      "optional": true
+    },
+    "research_gap_add": {
+      "optional": true
+    },
+    "research_project_continue": {
+      "optional": true
+    },
+    "research_project_create": {
+      "optional": true
+    },
+    "research_project_list": {
+      "optional": true
+    },
+    "research_search": {
+      "optional": true
+    },
+    "research_source_add": {
+      "optional": true
+    },
+    "research_source_delete": {
+      "optional": true
+    },
+    "research_source_list": {
+      "optional": true
+    },
+    "research_synthesize": {
+      "optional": true
+    },
+    "synthesize": {
+      "optional": true
+    },
+    "tenant_delete_secure": {
+      "optional": true
+    },
+    "tenant_export_secure": {
+      "optional": true
+    },
+    "turn_after": {
+      "optional": true
+    },
+    "turn_context": {
+      "optional": true
+    },
+    "web_search": {
+      "optional": true
+    },
+    "write_character_create": {
+      "optional": true
+    },
+    "write_continuity_check": {
+      "optional": true
+    },
+    "write_export": {
+      "optional": true
+    },
+    "write_project_create": {
+      "optional": true
+    },
+    "write_project_get": {
+      "optional": true
+    },
+    "write_project_list": {
+      "optional": true
+    },
+    "write_scene_create": {
+      "optional": true
+    },
+    "write_scene_update": {
+      "optional": true
+    }
   }
 }
