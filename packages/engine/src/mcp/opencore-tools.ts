@@ -403,7 +403,25 @@ export const handleEthicsTrace: McpToolHandler = async (args, ctx) => {
       : undefined;
     const { lookupEthicsKnowledge } = await import('../ethics-knowledge-lookup.js');
     const lookupFn = async (q: string, topK?: number) => lookupEthicsKnowledge(q, { topK });
-    const result = await evaluateFullPipeline(content, { recallFn, lookupFn });
+    // celiums-cognition local patch (vendored deviation, documented in
+    // CLAUDE.md §3b roadmap): when an LLM is env-configured
+    // (CELIUMS_LLM_* set), wire aiEvaluatorFn so Layer C (ethical
+    // frameworks) actually fires through ethics_trace. Falls back to
+    // undefined (Layer C null) when LLM is not configured — backward
+    // compatible.
+    const { llmChat, llmConfigured } = await import('../llm-client.js');
+    const aiEvaluatorFn = llmConfigured()
+      ? async (prompt: string) => await llmChat([{ role: 'user', content: prompt }])
+      : undefined;
+    const aiEvaluatorName = aiEvaluatorFn
+      ? `celiums-${process.env.CELIUMS_LLM_MODEL || 'llm'}`
+      : undefined;
+    const result = await evaluateFullPipeline(content, {
+      recallFn,
+      lookupFn,
+      aiEvaluatorFn,
+      aiEvaluatorName,
+    });
 
     const trace = {
       input_summary: content.slice(0, 200),
