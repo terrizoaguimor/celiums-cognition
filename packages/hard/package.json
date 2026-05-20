@@ -26,7 +26,7 @@
     "build": { "openclawVersion": "2026.5.19", "pluginSdkVersion": "2026.5.19" }
   },
   "scripts": {
-    "build": "tsup && cp -R src/compose dist/compose",
+    "build": "tsup && rm -rf dist/compose && cp -R src/compose dist/compose",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "echo '(hard E2E smoke is run against a live OpenClaw — see docs)'",
     "lint": "tsc -p tsconfig.json --noEmit"
