@@ -11,6 +11,7 @@
 // Capability (bundled-only / exclusive — see CLAUDE.md §2b). Every engine and
 // SDK call here was verified against real source 2026-05-19.
 
+import * as net from "node:net";
 import { definePluginEntry, type OpenClawPluginApi } from "../api.js";
 import {
   createMemoryEngine,
@@ -35,9 +36,54 @@ export interface EditionOptions {
   configSchema: unknown;
   /** Map plugin config → engine config (Hard: PG/Qdrant/Valkey URLs; Lite: pglite). */
   resolveEngineConfig: (cfg: CognitionConfig, api: OpenClawPluginApi) => CeliumsMemoryConfig;
+  /** Optional: bring the local infra up (e.g. Hard's docker stack).
+   *  Only invoked when service.start detects required listeners are down
+   *  AND the engine config points at localhost endpoints. Idempotent. */
+  bootstrap?: (
+    engineCfg: CeliumsMemoryConfig,
+    api: OpenClawPluginApi,
+  ) => Promise<void>;
 }
 
 const AUTO_RECALL_TIMEOUT_MS = 4_000;
+const LISTENER_PROBE_TIMEOUT_MS = 1_000;
+
+function isLocalhost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+/** Extract host+port from a connection-string URL (postgresql://, http://, redis://, …). */
+function parseHostPort(url: string | undefined): { host: string; port: number } | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    const port = u.port ? Number.parseInt(u.port, 10) : NaN;
+    if (!u.hostname || !Number.isFinite(port)) return undefined;
+    return { host: u.hostname, port };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Probe a TCP listener with a short timeout. Resolves true iff `connect` fires. */
+function isListenerOpen(host: string, port: number, timeoutMs = LISTENER_PROBE_TIMEOUT_MS): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, timeoutMs);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
   return Promise.race([
@@ -269,10 +315,62 @@ export function createCognitionPlugin(edition: EditionOptions) {
       }
 
       // ── Service + CLI ──────────────────────────────────────────────────
+      // service.start fallback: if the edition declared bootstrap and the
+      // required listeners aren't up, run bootstrap idempotently. Only
+      // probes localhost endpoints — if the operator has pointed the
+      // engine at a remote DB (e.g. DO Managed PG) we assume they manage
+      // their own infra and stay out of the way. Bootstrap failures are
+      // logged but never crash plugin start; the engine init is still
+      // lazy and will surface a clearer error at first tool call.
       api.registerService({
         id: edition.id,
-        start: () => {
-          api.logger.info(`${edition.id}: ready (engine init is lazy)`);
+        start: async () => {
+          if (!edition.bootstrap) {
+            api.logger.info(`${edition.id}: ready (engine init is lazy)`);
+            return;
+          }
+          const engineCfg = edition.resolveEngineConfig(cfg, api);
+          const ec = engineCfg as {
+            databaseUrl?: string;
+            qdrantUrl?: string;
+            valkeyUrl?: string;
+          };
+          const candidates = [
+            { name: "postgres", endpoint: parseHostPort(ec.databaseUrl) },
+            { name: "qdrant", endpoint: parseHostPort(ec.qdrantUrl) },
+            { name: "valkey", endpoint: parseHostPort(ec.valkeyUrl) },
+          ].flatMap((c) =>
+            c.endpoint && isLocalhost(c.endpoint.host)
+              ? [{ name: c.name, host: c.endpoint.host, port: c.endpoint.port }]
+              : [],
+          );
+          if (candidates.length === 0) {
+            api.logger.info(
+              `${edition.id}: ready (engine init is lazy, no local stack to bootstrap)`,
+            );
+            return;
+          }
+          const checks = await Promise.all(
+            candidates.map(async (c) => ({ ...c, up: await isListenerOpen(c.host, c.port) })),
+          );
+          const down = checks.filter((c) => !c.up);
+          if (down.length === 0) {
+            api.logger.info(
+              `${edition.id}: ready (stack up — ${checks.map((c) => `${c.name}:${c.port}`).join(", ")})`,
+            );
+            return;
+          }
+          api.logger.info(
+            `${edition.id}: bootstrap — ${down.map((d) => `${d.name}:${d.port}`).join(", ")} not responding; running setup…`,
+          );
+          try {
+            await edition.bootstrap(engineCfg, api);
+            api.logger.info(`${edition.id}: ready (bootstrap completed)`);
+          } catch (err) {
+            api.logger.warn?.(
+              `${edition.id}: bootstrap failed — ${err instanceof Error ? err.message : String(err)}; engine will surface a clearer error at first tool call`,
+            );
+          }
         },
         stop: () => {
           api.logger.info(`${edition.id}: stopped`);

@@ -4,10 +4,13 @@
  */
 
 // @celiumsai/cognition (Hard) — OpenClaw plugin entry, storage = pg-triple
-// (Postgres 17 + pgvector, Qdrant, Valkey). Provision the local stack with
-// `pnpm celiums-cognition setup` (src/setup.ts → docker compose).
+// (Postgres 17 + pgvector, Qdrant, Valkey). The local stack is provisioned
+// AUTOMATICALLY by the shared adapter's service.start fallback (CLAUDE.md
+// §3b directive: zero manual setup). Manual entry point still available
+// via the `bin: celiums-cognition` (src/setup.ts).
 
 import { createCognitionPlugin, withEditionProps } from "@celiumsai/cognition-shared";
+import { setup } from "./setup.js";
 
 const HARD_PROPS = {
   database: {
@@ -45,5 +48,16 @@ export default createCognitionPlugin({
       qdrantApiKey: process.env.CELIUMS_QDRANT_API_KEY,
       personality: "celiums",
     } as never;
+  },
+  bootstrap: async (_engineCfg, _api) => {
+    // The shared adapter only calls this when the local listeners (5432,
+    // 6333, 6379) are NOT responding. setup() runs `docker compose up
+    // -d --wait` against dist/compose/docker-compose.yml; the compose
+    // file binds to 127.0.0.1 (commit 66f2e50). Idempotent — if the
+    // stack is already up, compose is a no-op.
+    const code = await setup();
+    if (code !== 0) {
+      throw new Error(`celiums-cognition stack bootstrap exited with code ${code}`);
+    }
   },
 });
