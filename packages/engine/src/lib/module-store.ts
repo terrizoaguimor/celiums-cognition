@@ -37,13 +37,26 @@ import { PgModuleStore } from './pg-module-store.js';
 export type ModuleStore = RemoteModuleStore | PgModuleStore;
 
 /** A KNOWLEDGE_API_URL that points back at this service (or localhost) is
- *  NOT an external corpus host — using RemoteModuleStore there self-loops. */
-function isExternalHost(url: string | undefined): boolean {
+ *  NOT an external corpus host — using RemoteModuleStore there self-loops.
+ *
+ *  celiums-cognition extension (2026-05-20): operators of deployments that
+ *  are NOT memory.celiums.ai (e.g. this plugin running on prod-openclaw)
+ *  CAN federate to memory.celiums.ai. The self-loop guard exists to
+ *  protect the canonical SaaS from recursing into itself — it should NOT
+ *  block external consumers from using memory.celiums.ai as their
+ *  knowledge backend. Opt-in via CELIUMS_KNOWLEDGE_ALLOW_HOSTED=true.
+ *  Loopback (localhost / 127.0.0.1) stays unconditionally blocked. */
+function isExternalHost(
+  url: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
   if (!url) return false;
   const u = url.trim().toLowerCase();
   if (!/^https?:\/\//.test(u)) return false;
-  if (u.includes('memory.celiums.ai')) return false; // self
   if (u.includes('localhost') || u.includes('127.0.0.1')) return false;
+  if (u.includes('memory.celiums.ai')) {
+    return env['CELIUMS_KNOWLEDGE_ALLOW_HOSTED'] === 'true';
+  }
   return true;
 }
 
@@ -55,7 +68,7 @@ export function buildModuleStore(
   const apiKey = env['KNOWLEDGE_API_KEY'];
 
   // Escape hatch: a genuinely external corpus/federation host.
-  if (isExternalHost(apiUrl) && apiKey) {
+  if (isExternalHost(apiUrl, env) && apiKey) {
     return new RemoteModuleStore({ baseUrl: apiUrl as string, apiKey });
   }
 
