@@ -452,19 +452,38 @@ export interface KnowledgeMatch {
 }
 
 /** Layer K (Knowledge) verdict — precedent-based disambiguation.
- *  FLAG-ONLY by design (Atlas-reviewed redesign 2026-05-17, Mario's call):
- *  Layer K NEVER changes the enforcement decision. It can only emit an
- *  advisory 'flag' (a Layer-A block in a SOFT-ALLOW category that has
- *  precedent — a candidate over-block for the human review queue) or
- *  'abstain'. It cannot suppress, allow, or block. Worst case = abstain =
- *  no change. The prior 'suppress-block'/'block'/embedding-allow path was
- *  removed: it let real harm through (incident 2026-05-17). */
+ *
+ *  Original FLAG-ONLY design (Atlas-reviewed 2026-05-17, Mario's call):
+ *  Layer K could only emit an advisory 'flag' (a Layer-A block in a
+ *  SOFT-ALLOW category as a candidate over-block) or 'abstain'. The
+ *  prior 'suppress-block'/'allow' path was removed because embedding
+ *  similarity alone could not distinguish intent (incident 2026-05-17).
+ *
+ *  celiums-cognition extension (2026-05-20, plugin Hard E2E): a third
+ *  outcome 'escalate' is enabled under HARD-GATED conditions: the curated
+ *  corpus is the source of truth for critical-severity block-verdict
+ *  concepts, and when Layer A was silent on substantive content but the
+ *  corpus returns a high-similarity (>= 0.75) block-verdict critical
+ *  match with NO matching legitimate_exception, we escalate to block.
+ *  Respects the 2026-05-17 lesson: escalate is NOT similarity-only — it
+ *  requires the harvester to have explicitly classified the concept as
+ *  block + critical, AND a high topical match. A miscalibrated escalation
+ *  is a corpus-data bug (fix the harvest), not a code bug (the gates
+ *  are conjunctive). */
 export interface LayerKResult {
-  decision: 'flag' | 'abstain';
+  decision: 'flag' | 'abstain' | 'escalate';
   ruling?: string;
   justification: string;
   legal_references?: string[];
   confidence: number;
+  /** Set when decision==='escalate' — the curated corpus match that
+   *  triggered the silent→block escalation. */
+  escalation?: {
+    concept: string;
+    category?: string;
+    severity: string;
+    similarity: number;
+  };
 }
 
 export interface FullPipelineResult extends EthicsEvaluation {
@@ -572,6 +591,32 @@ export async function evaluateFullPipeline(
             : v,
         );
       }
+      // celiums-cognition extension (2026-05-20): Layer K escalate path.
+      // Layer A was silent on substantive content but the curated corpus
+      // returned a critical+block-verdict match (all gates checked in
+      // ethics-layer-k.ts). Promote to enforcement block. The corpus
+      // entry is the source of truth for verdict + severity — this is
+      // a curator-anchored escalation, not embedding-similarity-only.
+      if (layerK.decision === "escalate" && layerK.escalation) {
+        const esc = layerK.escalation;
+        result.passed = false;
+        result.violations = [
+          ...(result.violations || []),
+          {
+            blocked: true,
+            category: esc.category ?? "layer_k_escalation",
+            confidence: esc.similarity,
+            reason:
+              `Layer K escalation — corpus precedent "${esc.concept}" ` +
+              `(verdict=block, severity=${esc.severity}, sim=${esc.similarity.toFixed(2)}) ` +
+              `with no matching legitimate_exception. Layer A was silent.`,
+            layerKEscalation: true,
+            layerKRuling: layerK.ruling,
+            layerKSeverity: esc.severity,
+          } as EthicsViolation,
+        ];
+        result.score = Math.max(result.score, 0.9);
+      }
     } catch {}
   }
 
@@ -595,7 +640,10 @@ export async function evaluateFullPipeline(
     (f: any) => !f.suppressed && f.effectiveWeight >= 0.95 &&
       CATASTROPHIC.has(f.category),
   );
-  const enforcementBlocked =
+  // celiums-cognition extension (2026-05-20): `let` instead of `const` so
+  // a Layer C escalate (computed after Layer B runs) can refresh this
+  // before the audit/gate-mode dispatch reads it.
+  let enforcementBlocked =
     result.passed === false ||
     (result.violations?.some((v: any) => v.blocked) ?? false) ||
     catastrophicHit;
@@ -605,26 +653,64 @@ export async function evaluateFullPipeline(
 
   const hasAtlasKey = !!(process.env.CELIUMS_ATLAS_API_KEY || process.env.CELIUMS_API_KEY);
   const adaptiveThresh = result.layerA ? getAdaptiveThreshold(result.layerA.confidence) : ESCALATION_THRESHOLD;
-  if (!result.layerA || result.layerA.arousal < adaptiveThresh || !hasAtlasKey) {
+  const layerBEligible =
+    !!result.layerA && result.layerA.arousal >= adaptiveThresh && hasAtlasKey;
+  // celiums-cognition extension (2026-05-20): Layer C may run independently
+  // of Layer A's arousal threshold and Layer B. The upstream gate skipped
+  // the LLM evaluator whenever Layer A was silent, so jailbreak surfaces
+  // that LLMs catch easily (roleplay, fake system notes, dev-mode-claim)
+  // never reached Layer C — corpus and lexicon are blind to those forms.
+  // Now: run Layer C also when aiEvaluatorFn is configured and the content
+  // is substantive enough to be worth an LLM round-trip.
+  const layerCEligible =
+    !!options?.aiEvaluatorFn && content.trim().length >= 30;
+  if (!layerBEligible && !layerCEligible) {
     return { ...result, enforcementBlocked, layerK, auditMode: mode, knowledgeMatches };
   }
 
   let layerB: any = null;
-  try {
-    const { evaluateLayerB } = await import("./ethics-layer-b.js");
-    layerB = await evaluateLayerB(result.layerA, content, options?.recallFn);
-  } catch {}
+  if (layerBEligible) {
+    try {
+      const { evaluateLayerB } = await import("./ethics-layer-b.js");
+      layerB = await evaluateLayerB(result.layerA, content, options?.recallFn);
+    } catch {}
+  }
 
   let layerC: any = null;
-  if (options?.aiEvaluatorFn && layerB) {
+  if (options?.aiEvaluatorFn && (layerB || layerCEligible)) {
     try {
       const { evaluateLayerC } = await import("./ethics-layer-c.js");
       const caller = {
         name: options?.aiEvaluatorName || 'celiums-atlas',
         call: options.aiEvaluatorFn,
       };
-      layerC = await evaluateLayerC(content, layerB.justification || '', caller, result.layerA);
+      layerC = await evaluateLayerC(content, layerB?.justification || '', caller, result.layerA);
     } catch {}
+  }
+
+  // celiums-cognition extension (2026-05-20): Layer C may escalate to a
+  // block when the cross-framework consensus is 'forbid'. Required so
+  // contextual jailbreaks the lexicon/corpus miss (roleplay coercion,
+  // dev-mode injection, instructional disguise) still surface as
+  // enforcement blocks. Same conservative shape as the Layer K escalate
+  // — only on the strongest aggregated verdict, never on 'concern'.
+  if (layerC && layerC.aggregatedVerdict === 'forbid' && result.passed !== false) {
+    result.passed = false;
+    result.violations = [
+      ...(result.violations || []),
+      {
+        blocked: true,
+        category: 'layer_c_consensus',
+        confidence: layerC.convergenceScore ?? 0.5,
+        reason:
+          `Layer C escalation — multi-framework consensus 'forbid' ` +
+          `(convergence=${(layerC.convergenceScore ?? 0).toFixed(2)}). ` +
+          `Layer A/B did not produce a block.`,
+        layerCEscalation: true,
+      } as EthicsViolation,
+    ];
+    result.score = Math.max(result.score, 0.85);
+    enforcementBlocked = true;
   }
 
   // ══ AUDIT MODE (radar): classify, log, NEVER block ══

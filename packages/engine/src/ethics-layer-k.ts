@@ -71,8 +71,39 @@ function catMatches(cat: string, hints: string[]): boolean {
  *
  * Returns 'flag' (advisory only) or 'abstain'. NEVER changes enforcement.
  */
+// celiums-cognition extension (2026-05-20): escalate gate.
+// Only fires when ALL conditions hold:
+//   1. Layer A was SILENT (no block) — escalate only widens coverage
+//      where the lexicon missed; never overrides a Layer-A decision.
+//   2. Top corpus match has verdict==='block' (curator already said
+//      "block" for this concept — we are not inferring intent).
+//   3. severity==='critical' (curator already said it's worst-tier).
+//   4. similarity >= ESCALATE_SIM_FLOOR (0.75) — much higher than the
+//      generic SIM_FLOOR for advisories. Topical overlap must be strong.
+//   5. content does not invoke any legitimate_exception keyword from
+//      the corpus row — preserves the 2026-05-17 lesson (similarity
+//      alone cannot distinguish intent; require absence of exception
+//      keywords as a fail-closed guard).
+const ESCALATE_SIM_FLOOR = 0.75;
+
+function contentInvokesAnyException(content: string, exceptions: string[] | undefined): boolean {
+  if (!exceptions || exceptions.length === 0) return false;
+  const lc = content.toLowerCase();
+  for (const exc of exceptions) {
+    // Pull 2+ word fragments from the exception text and require any to
+    // appear verbatim in the content. Single short words like "research"
+    // alone are too easy to game.
+    const words = (exc || '').toLowerCase().match(/[a-z][a-z-]{3,}/g) || [];
+    for (let i = 0; i < words.length - 1; i++) {
+      const frag = `${words[i]} ${words[i + 1]}`;
+      if (lc.includes(frag)) return true;
+    }
+  }
+  return false;
+}
+
 export async function evaluateLayerK(
-  _content: string,
+  content: string,
   knowledgeMatches: KnowledgeMatch[] | undefined,
   layerABlocked: boolean,
 ): Promise<LayerKResult> {
@@ -82,11 +113,44 @@ export async function evaluateLayerK(
     confidence: 0,
   });
 
-  // Layer K only ever speaks to soften-for-review; if Layer A did not
-  // block, there is nothing to flag as an over-block.
-  if (!layerABlocked) return abstain('Layer A did not block — nothing to review');
   if (!knowledgeMatches || knowledgeMatches.length === 0)
     return abstain('no precedent matched');
+
+  // ── Escalate gate (silent→block widening) ─────────────────────────
+  // Runs ONLY when Layer A produced no block. This is the path that
+  // closes the "novel/clean-language threat" blind spot — the lexicon
+  // misses it but the curated corpus has a critical block-verdict
+  // concept and high topical similarity.
+  if (!layerABlocked) {
+    const top = knowledgeMatches[0];
+    const sim = top.similarity ?? 0;
+    const sev = String(top.severity ?? '').toLowerCase();
+    if (
+      top.verdict === 'block' &&
+      sev === 'critical' &&
+      sim >= ESCALATE_SIM_FLOOR &&
+      !contentInvokesAnyException(content, top.legitimate_exceptions)
+    ) {
+      return {
+        decision: 'escalate',
+        ruling: top.concept,
+        justification:
+          `Layer K escalate: corpus precedent "${top.concept}" carries ` +
+          `verdict=block, severity=critical, similarity=${sim.toFixed(3)} ` +
+          `(≥${ESCALATE_SIM_FLOOR}); content does not invoke any ` +
+          `legitimate_exception. Layer A was silent — corpus is canonical.`,
+        legal_references: top.legal_references,
+        confidence: sim,
+        escalation: {
+          concept: top.concept,
+          category: top.category,
+          severity: sev,
+          similarity: sim,
+        },
+      };
+    }
+    return abstain('Layer A did not block, and no critical-block precedent met escalate gates');
+  }
 
   const top = knowledgeMatches[0];
   const sim = top.similarity ?? 0;
