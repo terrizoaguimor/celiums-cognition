@@ -183,6 +183,43 @@ reference; it is external-installable and does NOT use
    better-sqlite3; SqliteAdapter is only the structural base for the
    Fase-4 pglite adapter). 704 logic tests + typecheck + build all green.
 
+## 3b. PRODUCT DIRECTIVE — auto-bootstrap mandatory (Mario, 2026-05-20)
+
+> *"Esto es para hardwork enterprises, no para el niñato de OpenClaw que dice
+> 'wow mira qué chulo'. Yo no debí darme cuenta de que iba a montar Docker +
+> pg + qdrant + valkey — sencillamente está y listo. No me interesa cómo
+> funciona mientras funcione."*
+
+**Supersedes HANDOFF §4.1 step 2** (the "Run `pnpm celiums-cognition setup`"
+instruction). The user MUST NOT have to run a setup step.
+
+`openclaw plugins install clawhub:@celiumsai/cognition` must trigger the
+full bootstrap automatically:
+
+1. **`postinstall` script** in `packages/hard/package.json` runs
+   `node dist/setup.js`.
+2. **`service.start` fallback** in `shared/plugin-adapter`: detects missing
+   pg/qdrant/valkey listeners on first start, runs the same bootstrap
+   idempotently.
+3. **`setup.js` behavior**: detects Docker; if missing and effective user has
+   sudo, installs `docker.io` non-interactively; then `docker compose -f
+   <bundled compose> up -d --wait` against the bundled pg17+pgvector /
+   qdrant 1.14 / valkey 8 stack. Health-gated. Container port bindings
+   restricted to `127.0.0.1:<port>:<port>` (do not expose to the public
+   interface — ufw on the host is not enough; docker bypasses iptables INPUT
+   chain by default).
+4. **Bug fix from prod E2E (claw.celiums.io)**: hard `package.json` build
+   script uses `cp -R src/compose dist/compose` which produces
+   `dist/compose/compose/docker-compose.yml` (double-nested). Change to
+   `cp -R src/compose/. dist/compose/` (or `rsync -a src/compose/ dist/compose/`)
+   so `dist/compose/docker-compose.yml` lands at the path `setup.ts` expects.
+
+**Fase 5 README must state upfront**: *"This is an enterprise hardwork
+plugin. On install, the Postgres + Qdrant + Valkey stack is provisioned
+automatically (~2GB RAM, Docker required). Zero manual setup. If you want
+zero-infra, see the Lite edition."* That positioning is the commercial
+differentiator vs. memory-core / memory-lancedb (file-based, simple).
+
 ## 4. NON-NEGOTIABLE RULES (HANDOFF §6)
 
 1. **NO `Co-Authored-By: Claude`** in commits. Author = Mario Gutierrez.
@@ -208,11 +245,19 @@ reference; it is external-installable and does NOT use
 - [x] Fase 2 — engine vendored from celiums-memory v2.0.0 (commit 6012e714):
       252 files + memory-types pkg, build ESM+DTS green, typecheck clean,
       704 logic tests pass / 19 skip / 0 fail. 5 workspace packages.
-- [~] Fase 3 — plugin Hard BUILT (commit d492e90): shared adapter (verified
-      memory-lancedb pattern) + hard (manifest, entry, compose, setup),
-      tsup bundles private pkgs into dist/index.js (474K), externals
-      openclaw + third-party. 5 pkgs build green. **E2E smoke PENDING**
-      (live OpenClaw on DO nyc1 VPS — in progress).
+- [x] Fase 3 — plugin Hard ✅ CERRADA. Commits d492e90 → f39fb17 → 9babbe4.
+      Verificado en PRODUCCIÓN sobre VPS de Mario (OpenClaw 2026.5.18,
+      usuario openclaw, systemd-user daemon + linger). Plugin reemplazó el
+      slot exclusivo `memory` del gateway (`memory-core` → `celiums-cognition`,
+      HANDOFF §1.1 cumplido). Runtime: status=loaded, 9 tools registrados
+      en vivo (absorb, ethics_trace, forage, journal_recall, journal_write,
+      map_network, recall, remember, sense) + service `celiums-cognition`.
+      Receta canónica usada: `loginctl enable-linger openclaw` +
+      `npm i -g openclaw@latest` + `openclaw gateway install` +
+      rsync→chown→clean-pkg→`npm install` +
+      `openclaw plugins install --link --dangerously-force-unsafe-install`
+      (break-glass legítimo per docs/cli/security.md) +
+      `systemctl --user enable --now openclaw-gateway`.
 - [ ] Fase 4 — plugin Lite (pglite-embedded adapter; unblocked)
 - [ ] Fase 5 — READMEs + docs + examples
 - [ ] Fase 6 — CI + release prep (ClawHub dry-run, re-verify compat)
