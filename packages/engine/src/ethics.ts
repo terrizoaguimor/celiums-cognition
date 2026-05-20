@@ -509,20 +509,34 @@ export async function evaluateFullPipeline(
   const engine = new EthicsEngine();
   const result = engine.evaluate(content);
 
-  // ── Corpus lookup (medium-confidence path) ─────────────────────────────
-  // When Layer A confidence is in [0.4, 0.7] and lookupFn is available,
-  // consult the ethics_knowledge corpus to ground the classification.
+  // ── Corpus lookup (knowledge-grounded path) ────────────────────────────
+  // Original (upstream) gate: only consult the ethics_knowledge corpus
+  // when Layer A's hardcoded lexicon already fired (confidence >= 0.4) or
+  // Layer A blocked. That assumed Layer A captures every threat surface —
+  // but novel/clean-language threats ("DDoS your website", "rm -rf /") miss
+  // the lexicon, give arousal=0, and the gate blocks the corpus lookup, so
+  // a well-populated ethics_knowledge corpus is never consulted.
+  //
+  // celiums-cognition local widening (2026-05-20, plugin Hard E2E):
+  // also consult the corpus when Layer A produced nothing actionable AND
+  // the content is substantive (>= 30 chars). The corpus is the canonical
+  // ground-truth for ethical concepts — its job IS to catch what the
+  // lexical sieve missed. Cost: +1 OpenSearch hybrid query (~30-50ms) per
+  // eval where the lexicon was silent.
   let knowledgeMatches: KnowledgeMatch[] | undefined;
-  // Layer A over-block lives in HIGH confidence too — widen the lookup
-  // window: confidence >= 0.4 (no ceiling) OR Layer A produced a block,
-  // so Layer K can review an over-block. (ETHICS_ENGINE_LAYER_K_FIX.md)
   const layerABlocked =
     result.passed === false ||
     (result.violations?.some((v: any) => v.blocked) ?? false);
+  const layerAFiredOrBlocked =
+    !!result.layerA && (result.layerA.confidence >= 0.4 || layerABlocked);
+  const layerASilentButSubstantive =
+    !!result.layerA &&
+    result.layerA.confidence < 0.4 &&
+    !layerABlocked &&
+    content.trim().length >= 30;
   if (
     options?.lookupFn &&
-    result.layerA &&
-    (result.layerA.confidence >= 0.4 || layerABlocked)
+    (layerAFiredOrBlocked || layerASilentButSubstantive)
   ) {
     try {
       knowledgeMatches = await options.lookupFn(content.slice(0, 500), 5);
