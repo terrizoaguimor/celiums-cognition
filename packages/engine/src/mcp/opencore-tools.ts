@@ -520,14 +520,22 @@ export const handleEthicsTrace: McpToolHandler = async (args, ctx) => {
     // celiums-memory — see docs/upstream-findings/ for the writeup.
     //
     // Best-effort: never throws, never blocks the response.
+    // Persist audit row for both BLOCK and FLAG outcomes (allow is not
+    // audited — would inundate the table with benign traces). Block =
+    // enforcement applied; flag = human review pending. Both deserve
+    // a forensic record. The `blocked` column tracks which it was.
     const aggregatedDecision = trace.aggregation.final_decision;
-    const wasBlocked =
+    const wasBlockedOrFlagged =
+      result.violations.some((v: any) => v.blocked) ||
+      aggregatedDecision === 'block' ||
+      aggregatedDecision === 'flag';
+    const enforcementBlocked =
       result.violations.some((v: any) => v.blocked) ||
       aggregatedDecision === 'block';
     const pool = (ctx as any).pool as
       | { query: (sql: string, params?: any[]) => Promise<any> }
       | undefined;
-    if (pool && wasBlocked) {
+    if (pool && wasBlockedOrFlagged) {
       try {
         const { createHash } = await import('node:crypto');
         const contentHash = createHash('sha256').update(content).digest('hex').slice(0, 16);
@@ -568,7 +576,7 @@ export const handleEthicsTrace: McpToolHandler = async (args, ctx) => {
             lawId,
             conf,
             reason,
-            true,
+            enforcementBlocked,
             contentHash,
             categories,
             JSON.stringify(scores),
