@@ -92,6 +92,19 @@ export class RemoteModuleStore {
     return this.searchFullText(query, limit);
   }
 
+  /** Hybrid (FTS + vector) — surface parity with PgModuleStore so the
+   *  caller (forage) can use either store interchangeably. memory.celiums.ai
+   *  doesn't (yet) expose a hybrid endpoint; until it does, this falls
+   *  back to FTS-only. When the remote adds a `/v1/modules?hybrid=true`
+   *  with an `embedding` body field, switch to POST here. */
+  async searchHybrid(
+    query: string,
+    _queryEmbedding: number[],
+    limit: number,
+  ): Promise<ModuleRow[]> {
+    return this.searchFullText(query, limit);
+  }
+
   async getIndex(): Promise<IndexShape> {
     const data = (await this.get('/v1/modules')) as IndexShape;
     const total = typeof data?.totalModules === 'number' ? data.totalModules : 0;

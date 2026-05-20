@@ -128,12 +128,58 @@ export interface ForageOutput {
   modules: ForageMatch[];
 }
 
+/**
+ * Embed a free-text query via the configured TEI server. Returns null
+ * on any failure so forage can degrade gracefully to FTS-only.
+ *
+ * Reads `TEI_URL` env at call time (defaults to the bundled docker
+ * stack at 127.0.0.1:8080). Uses POST /embed with `{inputs: [text]}`,
+ * the HuggingFace TEI shape, matching the local server's API.
+ */
+async function embedQueryViaTei(text: string): Promise<number[] | null> {
+  const teiBase = (process.env.TEI_URL ?? 'http://127.0.0.1:8080').replace(/\/$/, '');
+  if (!teiBase) return null;
+  try {
+    const r = await fetch(`${teiBase}/embed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputs: [text.slice(0, 6000)] }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) return null;
+    const data = (await r.json()) as number[][];
+    return Array.isArray(data?.[0]) && data[0].length > 0 ? data[0] : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function forage(input: ForageInput, ctx: ToolCtx): Promise<ForageOutput> {
   const query = (input.query ?? '').trim();
   if (!query) throw new LibraryInvalidInput('forage: query is required');
   const limit = safeLimit(input.limit, 10, 50);
   const store = getModuleStore(ctx);
-  const results = await store.searchFullText(query, limit);
+
+  // celiums-cognition extension (2026-05-20): default to hybrid search
+  // (FTS + vector) when the store supports it AND TEI is reachable for
+  // query embedding. Falls back gracefully to FTS-only on any failure.
+  // Upstream behaviour (FTS-only) is what callers got before; this is a
+  // strict superset of recall when both signals are available.
+  let results: any[] = [];
+  if (typeof store.searchHybrid === 'function') {
+    const emb = await embedQueryViaTei(query);
+    if (emb) {
+      try {
+        results = await store.searchHybrid(query, emb, limit);
+      } catch {
+        results = [];
+      }
+    }
+  }
+  if (results.length === 0) {
+    results = await store.searchFullText(query, limit);
+  }
+
   return {
     query,
     found: results.length,

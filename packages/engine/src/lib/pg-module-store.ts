@@ -112,6 +112,83 @@ export class PgModuleStore {
     return trg.rows.map(mapRow);
   }
 
+  /**
+   * celiums-cognition extension (2026-05-20): hybrid FTS + vector search.
+   *
+   * Upstream's `searchFullText` is the entry point `forage` uses, but it
+   * is FTS-only — `websearch_to_tsquery` over `search_tsv` with an ILIKE
+   * trigram fallback. That misses anything where the user's phrasing
+   * doesn't share english-dictionary tokens with the corpus rows
+   * (incident 2026-05-20: queries like "ethics content moderation
+   * pipeline multi-layer classification" returned zero results even
+   * though the corpus has the exact concept indexed semantically).
+   *
+   * `searchHybrid` keeps the FTS rank but ALSO runs a vector neighbour
+   * search against `skills.embedding` (HNSW cosine) using the caller's
+   * pre-computed query embedding. Both result sets are unioned, deduped
+   * by name, and re-ranked by a weighted sum:
+   *
+   *   hybrid_score = 0.4 * fts_rank + 0.6 * (1 - cosine_distance)
+   *
+   * Weights chosen so semantic match dominates marginally — FTS is still
+   * authoritative for exact-token matches, but a strong embedding match
+   * (e.g. paraphrase) wins over a weak FTS rank.
+   *
+   * Callers without a query embedding (TEI unreachable, embedding model
+   * unavailable) should fall back to searchFullText; this method
+   * intentionally REQUIRES the embedding so the cost/value tradeoff is
+   * explicit at the call site.
+   */
+  async searchHybrid(
+    query: string,
+    queryEmbedding: number[],
+    limit: number,
+  ): Promise<ModuleRow[]> {
+    const lim = this.sanitizeLimit(limit);
+    const q = String(query ?? '').trim();
+    if (!q) return [];
+    if (!Array.isArray(queryEmbedding) || queryEmbedding.length === 0) {
+      return this.searchFullText(q, lim);
+    }
+    const vecLiteral =
+      '[' + queryEmbedding.map((x) => Number(x).toFixed(7)).join(',') + ']';
+    // Pull 2x candidates per channel so the merge has room to re-rank.
+    const candLim = Math.min(MAX_RESULTS_CAP, lim * 2);
+    const sql = `
+      WITH fts AS (
+        SELECT name,
+               ts_rank(search_tsv, websearch_to_tsquery('english', $1)) AS fts_score
+          FROM skills
+         WHERE search_tsv @@ websearch_to_tsquery('english', $1)
+         ORDER BY fts_score DESC
+         LIMIT $3
+      ),
+      vec AS (
+        SELECT name,
+               1 - (embedding <=> $2::vector) AS vec_score
+          FROM skills
+         WHERE embedding IS NOT NULL
+         ORDER BY embedding <=> $2::vector
+         LIMIT $3
+      ),
+      merged AS (
+        SELECT COALESCE(f.name, v.name) AS name,
+               COALESCE(f.fts_score, 0) * 0.4
+                 + COALESCE(v.vec_score, 0) * 0.6 AS hybrid_score
+          FROM fts f
+          FULL OUTER JOIN vec v ON v.name = f.name
+      )
+      SELECT ${ROW_COLS}
+        FROM merged m
+        JOIN skills s ON s.name = m.name
+       ORDER BY m.hybrid_score DESC,
+                s.eval_score DESC NULLS LAST
+       LIMIT $4
+    `;
+    const r = await this.pool.query(sql, [q, vecLiteral, candLim, lim]);
+    return r.rows.map(mapRow);
+  }
+
   async getByCategory(category: string, limit: number): Promise<ModuleRow[]> {
     const lim = this.sanitizeLimit(limit);
     const r = await this.pool.query(

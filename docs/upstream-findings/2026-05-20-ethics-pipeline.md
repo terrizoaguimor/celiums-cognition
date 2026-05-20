@@ -204,6 +204,69 @@ Commit applying the fix: `b18c326` (vendor + bundle) and `d09844a`
 
 ---
 
+## 7. `forage` advertises hybrid search but only does FTS
+
+**Upstream**: `packages/core/src/lib/pg-module-store.ts:searchFullText` +
+`packages/core/src/lib/remote-module-store.ts:searchFullText` +
+`packages/core/src/lib/opencore.ts:forage`.
+
+**Symptom observed (2026-05-20, Mario's manual test)**: `forage` for
+queries like *"ethics content moderation safety pipeline multi-layer
+classification"* returned zero results even though the corpus had
+exactly that concept indexed semantically. The tool's description
+advertises hybrid (FTS + semantic) search, but the implementation:
+
+```ts
+// PgModuleStore.searchFullText (paraphrased)
+const fts = await pool.query(`... WHERE search_tsv @@ websearch_to_tsquery('english', $1) ...`);
+if (fts.rows.length > 0) return fts.rows.map(mapRow);
+// fallback to ILIKE name/display_name trigram
+return await pool.query(`... WHERE name ILIKE $1 OR display_name ILIKE $1 ...`);
+```
+
+— is **FTS over `search_tsv`** with an **ILIKE substring fallback**.
+**No vector search anywhere**. The 1024-dim `skills.embedding` column
+and its HNSW index are never consulted by `forage`. The
+`ethics-knowledge-lookup` path that Layer K uses *does* hybrid against
+OpenSearch (a different backend) — `forage` against the pg `skills`
+table does not.
+
+`websearch_to_tsquery` ANDs every term in the input, so a 6-word query
+needs all 6 stems to appear in some row's `search_tsv` to score
+non-zero. Paraphrases and conceptually-related rows are invisible.
+
+**Local fix** (commit attached): added
+`PgModuleStore.searchHybrid(query, queryEmbedding, limit)` which runs
+both signals in parallel:
+
+- FTS branch: `ts_rank(search_tsv, websearch_to_tsquery(...))` (existing)
+- Vector branch: `1 - (embedding <=> $vec::vector)` ordered by the
+  HNSW cosine index
+- Merged via `FULL OUTER JOIN` on name, ranked by
+  `0.4 * fts_score + 0.6 * vec_score`, breaks ties by `eval_score`.
+
+`forage` now calls `searchHybrid` first, embedding the query via the
+configured TEI server (`TEI_URL` env, defaults to `127.0.0.1:8080`
+which is the bundled stack). On TEI failure or zero hybrid results, it
+falls back to the upstream `searchFullText` behaviour — strict
+superset, no regression.
+
+`RemoteModuleStore.searchHybrid` exists for interface parity but
+currently falls back to FTS until `memory.celiums.ai` exposes a hybrid
+endpoint (recommend a `POST /v1/modules/search` accepting
+`{query, embedding}`).
+
+**Recommendation for upstream**:
+- Adopt the same hybrid pattern in `pg-module-store.ts`.
+- Expose a `POST /v1/modules/search` endpoint on `memory.celiums.ai`
+  accepting `{query, embedding}` so `RemoteModuleStore` can also do
+  hybrid when federated.
+- Update the `forage` tool's description from "Hybrid (FTS + semantic)"
+  to match reality, or fix the implementation; right now the
+  description is aspirational.
+
+---
+
 ## Summary
 
 | Item | Severity | Local fix commit | Status |
@@ -212,8 +275,9 @@ Commit applying the fix: `b18c326` (vendor + bundle) and `d09844a`
 | 2. Layer C gate too narrow | High (jailbreak miss) | `fae8d10` | Local fix deployed; upstream recommendation pending |
 | 3. Corpus lookup gate too narrow | High (corpus dead-code when Layer A silent) | `c20535d` | Local fix deployed; upstream recommendation pending |
 | 4. `logEthicsAudit` INSERT commented | Medium (no audit row) | n/a — bypassed | Local bypass via handler; upstream parameter-based pool injection recommended |
-| 5. Audit hook only in radar mode | Medium (gate mode produces no rows) | WIP | Local fix via handler; upstream unconditional-on-block recommended |
+| 5. Audit hook only in radar mode | Medium (gate mode produces no rows) | `3115a9e` | Local fix via handler; upstream unconditional-on-block recommended |
 | 6. Migrations not in npm package | Medium (consumer cannot run runner) | `b18c326` + `d09844a` | Local fix via vendor + bundle; upstream `files` whitelist add recommended |
+| 7. `forage` is FTS-only despite hybrid advertising | High (semantic recall miss for paraphrased queries) | this commit | Local fix via `searchHybrid` + TEI embedding; upstream same pattern + remote endpoint recommended |
 
 All fixes preserve the original 2026-05-17 redesign principle: *no
 embedding similarity alone, no lexical heuristic alone, no LLM output
