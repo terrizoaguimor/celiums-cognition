@@ -15,9 +15,11 @@ import { definePluginEntry, type OpenClawPluginApi } from "../api.js";
 import {
   createMemoryEngine,
   buildRegistry,
+  buildModuleStore,
   ethics,
   type CeliumsMemoryConfig,
   type MemoryEngineWithStore,
+  type ModuleStore,
 } from "@celiumsai/cognition-engine";
 import { parseConfig, type CognitionConfig } from "../config-schema/index.js";
 import { selectTools, CURATED_TOOL_NAMES, type EngineToolLike } from "../tool-curator/index.js";
@@ -92,6 +94,36 @@ export function createCognitionPlugin(edition: EditionOptions) {
         return enginePromise;
       };
 
+      // The vendored engine creates its own pg.Pool inside MemoryStore as a
+      // private `pg` field. Several MCP tool handlers expect that pool on
+      // ctx.pool (journal_*) or ctx.moduleStore (forage). Reach in once
+      // through the public `_store` escape hatch and reuse the SAME pool —
+      // avoids opening a second connection pool to the same DB.
+      const extractEnginePool = (
+        engine: MemoryEngineWithStore,
+      ): { query: (sql: string, params?: unknown[]) => Promise<unknown> } | undefined => {
+        const store = engine._store as { pg?: { query: (sql: string, params?: unknown[]) => Promise<unknown> } } | undefined;
+        return store?.pg;
+      };
+
+      // moduleStore — knowledge corpus over its OWN database. Default
+      // KNOWLEDGE_DATABASE_URL to the engine's CELIUMS_DATABASE_URL so the
+      // bundled compose (single Postgres) works out of the box; operators
+      // can still override to point at a separate corpus DB.
+      let moduleStoreCached: ModuleStore | null | undefined;
+      const getModuleStore = (): ModuleStore | null => {
+        if (moduleStoreCached !== undefined) return moduleStoreCached;
+        const env: NodeJS.ProcessEnv = {
+          ...process.env,
+          KNOWLEDGE_DATABASE_URL:
+            process.env.KNOWLEDGE_DATABASE_URL ??
+            process.env.CELIUMS_DATABASE_URL ??
+            "postgresql://celiums:celiums@127.0.0.1:5432/celiums_memory",
+        };
+        moduleStoreCached = buildModuleStore(env);
+        return moduleStoreCached;
+      };
+
       const toolCtx = (extra?: { agentId?: string; sessionId?: string }) => ({
         userId,
         capabilities: {
@@ -130,9 +162,16 @@ export function createCognitionPlugin(edition: EditionOptions) {
             async execute(_toolCallId: string, params: unknown) {
               try {
                 const engine = await getEngine();
+                const pool = extractEnginePool(engine);
+                const moduleStore = getModuleStore();
                 const res = (await tool.handler(
                   (params ?? {}) as Record<string, unknown>,
-                  { ...toolCtx(), memoryEngine: engine },
+                  {
+                    ...toolCtx(),
+                    memoryEngine: engine,
+                    ...(pool ? { pool } : {}),
+                    ...(moduleStore ? { moduleStore } : {}),
+                  },
                 )) as { content: Array<{ type: "text"; text: string }>; isError?: boolean };
                 return { content: res.content, ...(res.isError ? { isError: true } : {}) };
               } catch (err) {

@@ -663,6 +663,10 @@ export { JOURNAL_TOOLS } from './mcp/journal-tools.js';
 export { RESEARCH_TOOLS } from './mcp/research-tools.js';
 export { WRITE_TOOLS } from './mcp/write-tools.js';
 
+// Module store factory — picks PgModuleStore / RemoteModuleStore / null
+// from env. Exported so the plugin adapter can wire ctx.moduleStore.
+export { buildModuleStore, type ModuleStore } from './lib/module-store.js';
+
 // LLM client + provider catalog (BYOK)
 export { llmChat, llmEmbed, llmConfigured } from './llm-client.js';
 export type { ChatMessage, ChatOptions, EmbedOptions } from './llm-client.js';
