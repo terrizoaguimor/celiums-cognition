@@ -189,7 +189,13 @@ importers:
       '@celiumsai/cognition-engine':
         specifier: workspace:*
         version: link:../engine
+      pg:
+        specifier: ^8.20.0
+        version: 8.21.0
     devDependencies:
+      '@types/pg':
+        specifier: ^8.15.6
+        version: 8.20.0
       openclaw:
         specifier: 2026.5.19-beta.1
         version: 2026.5.19-beta.1(@cfworker/json-schema@4.1.1)

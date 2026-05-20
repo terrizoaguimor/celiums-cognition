@@ -21,9 +21,11 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@celiumsai/cognition-engine": "workspace:*"
+    "@celiumsai/cognition-engine": "workspace:*",
+    "pg": "^8.20.0"
   },
   "devDependencies": {
+    "@types/pg": "^8.15.6",
     "openclaw": "2026.5.19-beta.1"
   }
 }

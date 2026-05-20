@@ -12,12 +12,14 @@
 // SDK call here was verified against real source 2026-05-19.
 
 import * as net from "node:net";
+import { Pool } from "pg";
 import { definePluginEntry, type OpenClawPluginApi } from "../api.js";
 import {
   createMemoryEngine,
   buildRegistry,
   buildModuleStore,
   ethics,
+  makeMigrationsRunner,
   type CeliumsMemoryConfig,
   type MemoryEngineWithStore,
   type ModuleStore,
@@ -43,6 +45,12 @@ export interface EditionOptions {
     engineCfg: CeliumsMemoryConfig,
     api: OpenClawPluginApi,
   ) => Promise<void>;
+  /** Optional: directory containing /^\d+.*\.sql$/ migration files.
+   *  When set AND engineCfg.databaseUrl is present, service.start runs
+   *  the migrations runner after the bootstrap step (idempotent — only
+   *  applies pending migrations). Required for Hard (creates ethics_audit,
+   *  ethics_knowledge, journal tables, etc.); Lite uses pglite and skips. */
+  migrationsDir?: string;
 }
 
 const AUTO_RECALL_TIMEOUT_MS = 4_000;
@@ -62,6 +70,38 @@ function parseHostPort(url: string | undefined): { host: string; port: number } 
     return { host: u.hostname, port };
   } catch {
     return undefined;
+  }
+}
+
+/** Run pending migrations (idempotent). Uses a short-lived pg.Pool so we
+ *  don't piggy-back on the engine's lazy-init pool — migrations need to
+ *  apply BEFORE the first tool call asks the engine to query a table. */
+async function runMigrations(
+  edition: EditionOptions,
+  ec: { databaseUrl?: string },
+  api: OpenClawPluginApi,
+): Promise<void> {
+  if (!edition.migrationsDir || !ec.databaseUrl) return;
+  const pool = new Pool({ connectionString: ec.databaseUrl, max: 1 });
+  try {
+    const runner = makeMigrationsRunner({
+      pool: pool as unknown as Parameters<typeof makeMigrationsRunner>[0]["pool"],
+      migrationsDir: edition.migrationsDir,
+      logger: {
+        info: (m: string) => api.logger.info(`${edition.id}: migrations: ${m}`),
+        warn: (m: string) => api.logger.warn?.(`${edition.id}: migrations: ${m}`),
+      },
+    });
+    const result = await runner.up();
+    api.logger.info(
+      `${edition.id}: migrations applied=${result.applied.length} skipped=${result.skipped.length}`,
+    );
+  } catch (err) {
+    api.logger.warn?.(
+      `${edition.id}: migrations failed — ${err instanceof Error ? err.message : String(err)}; tools may fail until schema is in sync`,
+    );
+  } finally {
+    await pool.end().catch(() => undefined);
   }
 }
 
@@ -358,6 +398,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             api.logger.info(
               `${edition.id}: ready (stack up — ${checks.map((c) => `${c.name}:${c.port}`).join(", ")})`,
             );
+            await runMigrations(edition, ec, api);
             return;
           }
           api.logger.info(
@@ -366,6 +407,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
           try {
             await edition.bootstrap(engineCfg, api);
             api.logger.info(`${edition.id}: ready (bootstrap completed)`);
+            await runMigrations(edition, ec, api);
           } catch (err) {
             api.logger.warn?.(
               `${edition.id}: bootstrap failed — ${err instanceof Error ? err.message : String(err)}; engine will surface a clearer error at first tool call`,

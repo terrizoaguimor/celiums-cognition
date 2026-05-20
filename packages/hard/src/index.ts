@@ -9,8 +9,15 @@
 // §3b directive: zero manual setup). Manual entry point still available
 // via the `bin: celiums-cognition` (src/setup.ts).
 
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { createCognitionPlugin, withEditionProps } from "@celiumsai/cognition-shared";
 import { setup } from "./setup.js";
+
+// Migrations live in dist/migrations/ (copied by the build script from
+// ../engine/scripts/migrations/). Service.start applies pending ones via
+// the engine's migrations runner after the docker stack is healthy.
+const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "migrations");
 
 const HARD_PROPS = {
   database: {
@@ -49,6 +56,7 @@ export default createCognitionPlugin({
       personality: "celiums",
     } as never;
   },
+  migrationsDir: MIGRATIONS_DIR,
   bootstrap: async (_engineCfg, _api) => {
     // The shared adapter only calls this when the local listeners (5432,
     // 6333, 6379) are NOT responding. setup() runs `docker compose up
