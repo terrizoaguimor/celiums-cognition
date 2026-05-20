@@ -57,6 +57,8 @@ export default createCognitionPlugin({
     } as never;
   },
   migrationsDir: MIGRATIONS_DIR,
+  enableUiRoutes: true,
+  pluginVersion: "0.1.0",
   bootstrap: async (_engineCfg, _api) => {
     // The shared adapter only calls this when the local listeners (5432,
     // 6333, 6379) are NOT responding. setup() runs `docker compose up

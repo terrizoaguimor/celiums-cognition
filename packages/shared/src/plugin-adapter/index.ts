@@ -32,6 +32,7 @@ import {
   skillsRowCount,
   type SeedManagerOptions,
 } from "../seed.js";
+import { makeUiRouter, type UiRouterContext } from "../ui-routes.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -62,6 +63,16 @@ export interface EditionOptions {
    *  unset, no seed is applied (forage returns empty until the operator
    *  configures a seed URL or federates to a hosted knowledge backend). */
   seedOptions?: SeedManagerOptions;
+  /** Optional: when true, the adapter registers HTTP routes that back the
+   *  Celiums Cognition observability UI (health, counts, pillars, skills
+   *  search, skill detail, version check) under
+   *  /api/celiums-cognition/*. Hard sets this true; Lite leaves it off
+   *  until its own data model is wired (Fase 4). */
+  enableUiRoutes?: boolean;
+  /** Optional: plugin version string to expose via the UI /health and
+   *  /version-check endpoints. Pulled from edition package.json by the
+   *  edition entry; defaults to "0.0.0". */
+  pluginVersion?: string;
 }
 
 const AUTO_RECALL_TIMEOUT_MS = 4_000;
@@ -468,6 +479,74 @@ export function createCognitionPlugin(edition: EditionOptions) {
           api.logger.info(`${edition.id}: stopped`);
         },
       });
+
+      // ── HTTP routes (observability UI backend) ────────────────────────
+      // When the edition opts in (Hard: yes, Lite: not yet), register a
+      // prefix route under /api/celiums-cognition/* that the SPA frontend
+      // consumes. The handler resolves its dependencies (pg pool, engine
+      // config, TEI url, plugin metadata) lazily on first request — we
+      // can't access them at register() time because the engine is
+      // lazy-init.
+      if (edition.enableUiRoutes) {
+        let uiRouterCache: ReturnType<typeof makeUiRouter> | undefined;
+        const ensureRouter = async (): Promise<ReturnType<typeof makeUiRouter>> => {
+          if (uiRouterCache) return uiRouterCache;
+          const engine = await getEngine();
+          const pool = extractEnginePool(engine);
+          if (!pool) {
+            throw new Error(
+              "UI routes require a Postgres pool — engine running in in-memory or sqlite mode",
+            );
+          }
+          const ec = edition.resolveEngineConfig(cfg, api) as {
+            databaseUrl?: string;
+            qdrantUrl?: string;
+            valkeyUrl?: string;
+          };
+          const ctx: UiRouterContext = {
+            pool: pool as unknown as UiRouterContext["pool"],
+            engineConfig: ec,
+            teiUrl: process.env.TEI_URL ?? "http://127.0.0.1:8080",
+            plugin: {
+              id: edition.id,
+              version: edition.pluginVersion ?? "0.0.0",
+              edition: (edition.id.endsWith("-lite") ? "lite" : "hard") as "hard" | "lite",
+            },
+            installedAt: process.env.CELIUMS_PLUGIN_INSTALLED_AT,
+            logger: {
+              info: (m: string) => api.logger.info(`${edition.id}: ui: ${m}`),
+              warn: (m: string) => api.logger.warn?.(`${edition.id}: ui: ${m}`),
+            },
+          };
+          uiRouterCache = makeUiRouter(ctx);
+          return uiRouterCache;
+        };
+        api.registerHttpRoute({
+          path: "/api/celiums-cognition",
+          match: "prefix",
+          auth: "plugin",
+          handler: async (req, res) => {
+            try {
+              const router = await ensureRouter();
+              await router.apiPrefix(req, res);
+            } catch (err) {
+              if (!res.headersSent) {
+                res.statusCode = 503;
+                res.setHeader("Content-Type", "application/json");
+                res.end(
+                  JSON.stringify({
+                    error: {
+                      code: "UI_ROUTER_UNAVAILABLE",
+                      message: err instanceof Error ? err.message : String(err),
+                    },
+                  }),
+                );
+              }
+            }
+          },
+        });
+        api.logger.info(`${edition.id}: HTTP routes mounted at /api/celiums-cognition/*`);
+      }
 
       api.registerCli(
         async ({ program }: { program: { command: (n: string) => unknown } }) => {
