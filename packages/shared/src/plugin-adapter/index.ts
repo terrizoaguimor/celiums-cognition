@@ -26,6 +26,12 @@ import {
 } from "@celiumsai/cognition-engine";
 import { parseConfig, type CognitionConfig } from "../config-schema/index.js";
 import { selectTools, CURATED_TOOL_NAMES, type EngineToolLike } from "../tool-curator/index.js";
+import {
+  applyIfNeeded as applySeedIfNeeded,
+  seedOptionsFromEnv,
+  skillsRowCount,
+  type SeedManagerOptions,
+} from "../seed.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -51,6 +57,11 @@ export interface EditionOptions {
    *  applies pending migrations). Required for Hard (creates ethics_audit,
    *  ethics_knowledge, journal tables, etc.); Lite uses pglite and skips. */
   migrationsDir?: string;
+  /** Optional: skills corpus seed configuration. When unset, falls back to
+   *  CELIUMS_SEED_URL / CELIUMS_SEED_VERSION env vars; when those are also
+   *  unset, no seed is applied (forage returns empty until the operator
+   *  configures a seed URL or federates to a hosted knowledge backend). */
+  seedOptions?: SeedManagerOptions;
 }
 
 const AUTO_RECALL_TIMEOUT_MS = 4_000;
@@ -100,6 +111,43 @@ async function runMigrations(
     api.logger.warn?.(
       `${edition.id}: migrations failed — ${err instanceof Error ? err.message : String(err)}; tools may fail until schema is in sync`,
     );
+  } finally {
+    await pool.end().catch(() => undefined);
+  }
+}
+
+/** Apply the skills-corpus seed (idempotent — celiums_migrations tracks
+ *  the version). No-op when CELIUMS_SEED_URL is unset or skills already
+ *  populated by a prior run. Best-effort: errors are logged, never thrown. */
+async function runSeed(
+  edition: EditionOptions,
+  ec: { databaseUrl?: string },
+  api: OpenClawPluginApi,
+): Promise<void> {
+  if (!ec.databaseUrl) return;
+  const seedOpts: SeedManagerOptions | null =
+    edition.seedOptions ?? seedOptionsFromEnv();
+  if (!seedOpts) return;
+  const pool = new Pool({ connectionString: ec.databaseUrl, max: 1 });
+  try {
+    const applied = await applySeedIfNeeded(
+      pool as unknown as Parameters<typeof applySeedIfNeeded>[0],
+      {
+        ...seedOpts,
+        logger: {
+          info: (m: string) => api.logger.info(`${edition.id}: ${m}`),
+          warn: (m: string) => api.logger.warn?.(`${edition.id}: ${m}`),
+        },
+      },
+    );
+    if (applied) {
+      const n = await skillsRowCount(
+        pool as unknown as Parameters<typeof skillsRowCount>[0],
+      );
+      if (n != null) {
+        api.logger.info(`${edition.id}: skills corpus has ${n} rows`);
+      }
+    }
   } finally {
     await pool.end().catch(() => undefined);
   }
@@ -399,6 +447,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
               `${edition.id}: ready (stack up — ${checks.map((c) => `${c.name}:${c.port}`).join(", ")})`,
             );
             await runMigrations(edition, ec, api);
+            await runSeed(edition, ec, api);
             return;
           }
           api.logger.info(
@@ -408,6 +457,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             await edition.bootstrap(engineCfg, api);
             api.logger.info(`${edition.id}: ready (bootstrap completed)`);
             await runMigrations(edition, ec, api);
+            await runSeed(edition, ec, api);
           } catch (err) {
             api.logger.warn?.(
               `${edition.id}: bootstrap failed — ${err instanceof Error ? err.message : String(err)}; engine will surface a clearer error at first tool call`,
