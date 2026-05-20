@@ -1,0 +1,364 @@
+/* Celiums design tokens — real brand: sand/cream light + near-black dark, signal-green accent.
+   Light is the default. Toggle dark by setting [data-theme="dark"] on the .celiums root
+   (or on :root for body-level elements like the toast). */
+
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Roboto+Mono:wght@400;500&display=swap');
+
+.celiums {
+  /* warm cream neutrals — light */
+  --c-bg:         #f5f5f0;   /* page (matches wordmark hero bg) */
+  --c-surface:    #fbfbf7;   /* cards, popovers */
+  --c-surface-2: #ecebe4;   /* recessed (sidebar) */
+  --c-hover:      #e6e5dd;
+  --c-active:     #dedcd4;
+
+  --c-border:     #d8d6cb;
+  --c-border-strong: #c0bdaf;
+  --c-divider:    #e7e5db;
+
+  --c-fg:         #0a0a0a;
+  --c-fg-muted:   #4f4d44;
+  --c-fg-subtle:  #7a7770;
+  --c-fg-faint:   #a39f96;
+
+  /* Celiums signal-green — pure brand color */
+  --c-green:       #00D26A;
+  --c-green-hover: #00B85C;
+  --c-green-soft:  rgba(0, 210, 106, 0.12);
+  --c-green-text:  #00824C;
+  --c-green-dot:   #00D26A;
+
+  /* amber — warnings */
+  --c-amber:      #d97706;
+  --c-amber-soft: rgba(245, 158, 11, 0.14);
+  --c-amber-text: #92400e;
+
+  /* red — destructive */
+  --c-red:        #d04050;
+  --c-red-soft:   rgba(208, 64, 80, 0.10);
+  --c-red-text:   #94252f;
+
+  /* type */
+  --font-display: 'Roboto Slab', Georgia, serif;
+  --font-sans:    'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono:    'Roboto Mono', 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+
+  background: var(--c-bg);
+  color: var(--c-fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Dark — near-black with subtle green undertone, matches the dark wordmark bg. */
+.celiums[data-theme="dark"],
+[data-theme="dark"] .celiums,
+:root[data-theme="dark"] {
+  --c-bg:         #0a0c0b;
+  --c-surface:    #11140f;
+  --c-surface-2:  #0c0f0d;
+  --c-hover:      #181c17;
+  --c-active:     #1f241e;
+
+  --c-border:     #1f231d;
+  --c-border-strong: #2b3128;
+  --c-divider:    #181c17;
+
+  --c-fg:         #f5f5f0;
+  --c-fg-muted:   #aeada4;
+  --c-fg-subtle:  #76746c;
+  --c-fg-faint:   #4d4c47;
+
+  --c-green:       #00D26A;
+  --c-green-hover: #1be582;
+  --c-green-soft:  rgba(0, 210, 106, 0.14);
+  --c-green-text:  #5ee19c;
+  --c-green-dot:   #00D26A;
+
+  --c-amber:      #f59e0b;
+  --c-amber-soft: rgba(245, 158, 11, 0.14);
+  --c-amber-text: #fbbf24;
+
+  --c-red:        #ef4444;
+  --c-red-soft:   rgba(239, 68, 68, 0.12);
+  --c-red-text:   #fca5a5;
+}
+
+/* primitives ─────────────────────────────────────────────── */
+
+.celiums, .celiums * { box-sizing: border-box; }
+
+.celiums-h1 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 48px;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  color: var(--c-fg);
+  margin: 0;
+}
+.celiums-h2 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 32px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--c-fg);
+  margin: 0;
+}
+.celiums-h3 {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 18px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--c-fg);
+  margin: 0;
+}
+.celiums-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--c-fg-muted);
+}
+.celiums-mono   { font-family: var(--font-mono); font-feature-settings: 'tnum'; }
+.celiums-muted  { color: var(--c-fg-muted); }
+.celiums-subtle { color: var(--c-fg-subtle); }
+
+/* dot — the green-dot motif */
+.celiums-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--c-green-dot);
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
+.celiums-dot.amber { background: var(--c-amber); }
+.celiums-dot.red   { background: var(--c-red); }
+.celiums-dot.muted { background: var(--c-fg-faint); }
+
+/* button */
+.celiums-btn {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  color: var(--c-fg);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s, border-color .12s;
+}
+.celiums-btn:hover { background: var(--c-hover); }
+.celiums-btn.primary {
+  background: var(--c-green);
+  border-color: var(--c-green);
+  color: #052b18;
+  font-weight: 600;
+}
+.celiums-btn.primary:hover { background: var(--c-green-hover); border-color: var(--c-green-hover); }
+.celiums-btn.ghost  { background: transparent; border-color: transparent; }
+.celiums-btn.ghost:hover { background: var(--c-hover); }
+.celiums-btn.danger { color: var(--c-red-text); border-color: var(--c-border); }
+.celiums-btn.danger:hover { background: var(--c-red-soft); border-color: var(--c-red-soft); }
+.celiums-btn.lg { padding: 11px 18px; font-size: 14px; }
+.celiums-btn.sm { padding: 6px 10px; font-size: 12px; }
+.celiums-btn.full { width: 100%; }
+.celiums-btn[disabled], .celiums-btn.disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* input */
+.celiums-input {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  color: var(--c-fg);
+  outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+.celiums-input::placeholder { color: var(--c-fg-subtle); }
+.celiums-input:focus { border-color: var(--c-green); box-shadow: 0 0 0 3px var(--c-green-soft); }
+.celiums-input.error { border-color: var(--c-red); }
+.celiums-input.error:focus { box-shadow: 0 0 0 3px var(--c-red-soft); }
+.celiums-input.mono { font-family: var(--font-mono); }
+
+.celiums-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-fg-muted);
+  margin-bottom: 6px;
+}
+.celiums-hint {
+  font-size: 12px;
+  color: var(--c-fg-subtle);
+  margin-top: 6px;
+}
+.celiums-hint.error { color: var(--c-red-text); }
+
+/* card */
+.celiums-card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.celiums-card-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--c-divider);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.celiums-card-body { padding: 18px; }
+
+/* chip / pill */
+.celiums-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  color: var(--c-fg-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.celiums-chip.green { background: var(--c-green-soft); border-color: transparent; color: var(--c-green-text); }
+.celiums-chip.amber { background: var(--c-amber-soft); border-color: transparent; color: var(--c-amber-text); }
+.celiums-chip.red   { background: var(--c-red-soft);   border-color: transparent; color: var(--c-red-text); }
+
+/* table */
+.celiums-table { width: 100%; border-collapse: collapse; }
+.celiums-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--c-fg-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-family: var(--font-mono);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-surface-2);
+}
+.celiums-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--c-divider);
+  font-size: 13px;
+  color: var(--c-fg);
+  vertical-align: middle;
+}
+.celiums-table tr:last-child td { border-bottom: 0; }
+.celiums-table tr.row-hover:hover td { background: var(--c-hover); }
+
+/* avatar */
+.celiums-avatar {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  color: var(--c-fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+/* kbd */
+.celiums-kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 5px;
+  border: 1px solid var(--c-border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--c-fg-muted);
+  background: var(--c-surface);
+}
+
+/* divider */
+.celiums-divider {
+  height: 1px;
+  background: var(--c-divider);
+  border: 0;
+  margin: 0;
+}
+
+/* link */
+.celiums-link {
+  color: var(--c-green-text);
+  text-decoration: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+.celiums-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* progress bar */
+.celiums-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--c-surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.celiums-bar > .fill {
+  height: 100%;
+  background: var(--c-green);
+  border-radius: inherit;
+  transition: width .3s;
+}
+.celiums-bar.amber > .fill { background: var(--c-amber); }
+.celiums-bar.red   > .fill { background: var(--c-red); }
+
+/* segmented control */
+.celiums-seg {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  gap: 2px;
+}
+.celiums-seg > button {
+  border: 0;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-fg-muted);
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.celiums-seg > button.active {
+  background: var(--c-surface);
+  color: var(--c-fg);
+  box-shadow: 0 0 0 1px var(--c-border);
+}

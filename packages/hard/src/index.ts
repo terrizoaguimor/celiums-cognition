@@ -17,7 +17,9 @@ import { setup } from "./setup.js";
 // Migrations live in dist/migrations/ (copied by the build script from
 // ../engine/scripts/migrations/). Service.start applies pending ones via
 // the engine's migrations runner after the docker stack is healthy.
-const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "migrations");
+const __DIR = dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_DIR = join(__DIR, "migrations");
+const UI_STATIC_DIR = join(__DIR, "ui");
 
 const HARD_PROPS = {
   database: {
@@ -58,6 +60,7 @@ export default createCognitionPlugin({
   },
   migrationsDir: MIGRATIONS_DIR,
   enableUiRoutes: true,
+  uiStaticDir: UI_STATIC_DIR,
   pluginVersion: "0.1.0",
   bootstrap: async (_engineCfg, _api) => {
     // The shared adapter only calls this when the local listeners (5432,

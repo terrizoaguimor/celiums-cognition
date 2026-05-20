@@ -33,6 +33,7 @@ import {
   type SeedManagerOptions,
 } from "../seed.js";
 import { makeUiRouter, type UiRouterContext } from "../ui-routes.js";
+import { makeUiStaticHandler } from "../ui-static.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -73,6 +74,11 @@ export interface EditionOptions {
    *  /version-check endpoints. Pulled from edition package.json by the
    *  edition entry; defaults to "0.0.0". */
   pluginVersion?: string;
+  /** Optional: absolute path to the directory containing the built SPA
+   *  (index.html + assets/). When set, the adapter registers a static
+   *  file handler at /plugins/celiums-cognition/* so operators can open
+   *  the observability dashboard in their browser. */
+  uiStaticDir?: string;
 }
 
 const AUTO_RECALL_TIMEOUT_MS = 4_000;
@@ -546,6 +552,25 @@ export function createCognitionPlugin(edition: EditionOptions) {
           },
         });
         api.logger.info(`${edition.id}: HTTP routes mounted at /api/celiums-cognition/*`);
+
+        // Static SPA handler — serves index.html, the Vite-built assets,
+        // and the SVG logos under /plugins/celiums-cognition/*.
+        if (edition.uiStaticDir) {
+          const staticHandler = makeUiStaticHandler({
+            rootDir: edition.uiStaticDir,
+            pathPrefix: "/plugins/celiums-cognition",
+            logger: { warn: (m: string) => api.logger.warn?.(`${edition.id}: ${m}`) },
+          });
+          api.registerHttpRoute({
+            path: "/plugins/celiums-cognition",
+            match: "prefix",
+            auth: "plugin",
+            handler: staticHandler,
+          });
+          api.logger.info(
+            `${edition.id}: SPA mounted at /plugins/celiums-cognition/ (serving from ${edition.uiStaticDir})`,
+          );
+        }
       }
 
       api.registerCli(
