@@ -1,42 +1,65 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect, Fragment } from 'react';
-import { MOCK_COUNTS, MOCK_HEALTH } from './data.js';
-import { CCConsoleShell, Toast } from './cc-shell.jsx';
-import { TweakRadio, TweakSection, TweakToggle, TweaksPanel } from './tweaks-panel.jsx';
-import { AuthFlow } from './auth.jsx';
-import { Overview } from './overview.jsx';
-import { Skills } from './skills.jsx';
-import { Memories } from './memories.jsx';
-import { Journal } from './journal.jsx';
-import { Ethics } from './ethics.jsx';
-import { Settings } from './settings.jsx';
-/* Celiums Cognition — App shell + routing + Tweaks. */
+/*
+ * Copyright 2026 Celiums Solutions LLC
+ * Licensed under the Apache License, Version 2.0
+ */
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { CCConsoleShell, Toast } from "./cc-shell.jsx";
+import { TweakRadio, TweakSection, TweakToggle, TweaksPanel } from "./tweaks-panel.jsx";
+import { AuthFlow } from "./auth.jsx";
+import { Overview } from "./overview.jsx";
+import { Skills } from "./skills.jsx";
+import { Memories } from "./memories.jsx";
+import { Journal } from "./journal.jsx";
+import { Ethics } from "./ethics.jsx";
+import { Settings } from "./settings.jsx";
+import {
+  authMe, authLogout,
+  fetchHealth, fetchCounts, useQuery,
+} from "./data.js";
+
+/* App shell — bootstraps the session from /auth/me, routes tabs, holds
+ * the lightweight Tweaks (theme / live-dot) in localStorage. */
 
 export const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "theme": "light",
-  "showLiveDot": true
+  "showLiveDot": true,
 }/*EDITMODE-END*/;
 
 export const ROUTES = ["overview", "skills", "memories", "journal", "ethics", "settings"];
 
 export function App() {
-  // First-run / session detection
-  const [authState, setAuthState] = useState(() => {
-    try {
-      const hasAccount = !!localStorage.getItem("celiums.account");
-      const hasSession = !!localStorage.getItem("celiums.session");
-      if (!hasAccount) return "onboard";
-      if (!hasSession) return "login";
-      return "in";
-    } catch { return "onboard"; }
-  });
+  // ── bootstrap auth ──
+  // "bootstrapping" until /auth/me returns; then "onboard" | "login" | "in".
+  const [authState, setAuthState] = useState("bootstrapping");
+  const [user, setUser] = useState(null);
 
+  const refreshAuth = useCallback(async () => {
+    try {
+      const r = await authMe();
+      if (r.authenticated) {
+        setUser(r.user);
+        setAuthState("in");
+      } else if (r.account_exists) {
+        setUser(null);
+        setAuthState("login");
+      } else {
+        setUser(null);
+        setAuthState("onboard");
+      }
+    } catch {
+      // /auth/me failed (network/server). Show login screen as the safest
+      // state — onboarding would let someone overwrite the account.
+      setUser(null);
+      setAuthState("login");
+    }
+  }, []);
+  useEffect(() => { refreshAuth(); }, [refreshAuth]);
+
+  // ── tab routing via location.hash ──
   const [route, setRoute] = useState(() => {
     const h = window.location.hash.replace("#", "");
     return ROUTES.includes(h) ? h : "overview";
   });
-  const [values, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const [toast, setToast] = useState({ open: false, msg: "" });
-
   useEffect(() => {
     const onHash = () => {
       const h = window.location.hash.replace("#", "");
@@ -45,17 +68,22 @@ export function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+  const navigate = (r) => {
+    setRoute(r);
+    window.location.hash = r;
+    document.querySelector("main")?.scrollTo({ top: 0, behavior: "instant" });
+  };
 
-  // Apply theme to documentElement so :root[data-theme="dark"] vars cascade
-  // to portal-rendered elements (toast, tweak panel, body bg).
+  // ── visual tweaks ──
+  const [values, setTweak] = useTweaks(TWEAK_DEFAULTS);
   useEffect(() => {
     if (values.theme === "dark") document.documentElement.setAttribute("data-theme", "dark");
     else document.documentElement.removeAttribute("data-theme");
   }, [values.theme]);
 
-  // Keyboard shortcuts ⌘1-5, ⌘,
+  // ── keyboard shortcuts ⌘1-5 + ⌘, ──
   useEffect(() => {
-    const onKey = e => {
+    const onKey = (e) => {
       if (!(e.metaKey || e.ctrlKey)) return;
       const map = { "1": "overview", "2": "skills", "3": "memories", "4": "journal", "5": "ethics", ",": "settings" };
       const target = map[e.key];
@@ -65,41 +93,47 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const navigate = (r) => {
-    setRoute(r);
-    window.location.hash = r;
-    document.querySelector("main")?.scrollTo({ top: 0, behavior: "instant" });
-  };
-
-  const showToast = msg => {
+  // ── toast ──
+  const [toast, setToast] = useState({ open: false, msg: "" });
+  const showToast = (msg) => {
     setToast({ open: true, msg });
     clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => setToast(t => ({ ...t, open: false })), 1900);
+    showToast._t = setTimeout(() => setToast((t) => ({ ...t, open: false })), 1900);
   };
 
-  const health = MOCK_DATA.MOCK_HEALTH;
-  const counts = MOCK_DATA.MOCK_COUNTS;
-  const allOk = Object.values(health.stack).every(s => s.ok);
-  const healthForShell = { ...health, allOk };
+  // ── live stack health + counts (only when authenticated) ──
+  const enabled = authState === "in";
+  const healthQ = useQuery(() => (enabled ? fetchHealth() : Promise.resolve(null)), [enabled]);
+  const countsQ = useQuery(() => (enabled ? fetchCounts() : Promise.resolve(null)), [enabled]);
+  const healthForShell = useMemo(() => {
+    if (!healthQ.data) return null;
+    const stack = healthQ.data.stack ?? {};
+    const allOk = Object.values(stack).every((s) => s?.ok);
+    return { ...healthQ.data, allOk };
+  }, [healthQ.data]);
 
-  // Read account for shell display
-  const account = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem("celiums.account") || "{}"); }
-    catch { return {}; }
-  }, [authState]);
-  const user = { name: account.username || "Operator", email: account.email || "—" };
-
+  // ── page title ──
   useEffect(() => {
     if (authState !== "in") {
-      document.title = authState === "onboard" ? "Get started · Celiums Cognition" : "Sign in · Celiums Cognition";
+      document.title = authState === "onboard"
+        ? "Get started · Celiums Cognition"
+        : authState === "login"
+          ? "Sign in · Celiums Cognition"
+          : "Celiums Cognition";
       return;
     }
     const titles = {
       overview: "Overview", skills: "Skills", memories: "Memories",
-      journal: "Journal", ethics: "Ethics", settings: "Settings"
+      journal: "Journal", ethics: "Ethics", settings: "Settings",
     };
     document.title = `${titles[route]} · Celiums Cognition`;
   }, [route, authState]);
+
+  // ── render ──
+
+  if (authState === "bootstrapping") {
+    return <Bootstrapping theme={values.theme} />;
+  }
 
   if (authState !== "in") {
     return (
@@ -108,8 +142,10 @@ export function App() {
           mode={authState}
           theme={values.theme}
           onComplete={(res) => {
-            if (res?.existing && authState === "onboard") setAuthState("login");
-            else setAuthState("in");
+            // res may carry { existing, wantOnboard }; either way, re-check
+            // the server to derive the new state.
+            if (res?.wantOnboard) { setAuthState("onboard"); return; }
+            refreshAuth();
           }}
         />
         <TweaksMount values={values} setTweak={setTweak} />
@@ -117,22 +153,31 @@ export function App() {
     );
   }
 
+  const shellUser = {
+    name: user?.username || "Operator",
+    email: user?.email || "—",
+  };
+
   return (
     <>
       <CCConsoleShell
         route={route}
         onNavigate={navigate}
-        counts={counts}
+        counts={countsQ.data}
         health={healthForShell}
         theme={values.theme}
-        user={user}
+        user={shellUser}
+        onLogout={async () => {
+          try { await authLogout(); } catch {}
+          await refreshAuth();
+        }}
       >
-        {route === "overview" && <Overview health={health} counts={counts} showToast={showToast} />}
-        {route === "skills"   && <Skills showToast={showToast} />}
+        {route === "overview" && <Overview showToast={showToast} />}
+        {route === "skills"   && <Skills   showToast={showToast} />}
         {route === "memories" && <Memories showToast={showToast} />}
-        {route === "journal"  && <Journal showToast={showToast} />}
-        {route === "ethics"   && <Ethics showToast={showToast} />}
-        {route === "settings" && <Settings showToast={showToast} />}
+        {route === "journal"  && <Journal  showToast={showToast} />}
+        {route === "ethics"   && <Ethics   showToast={showToast} />}
+        {route === "settings" && <Settings showToast={showToast} user={user} />}
       </CCConsoleShell>
 
       <Toast open={toast.open} message={toast.msg} />
@@ -140,6 +185,41 @@ export function App() {
       <TweaksMount values={values} setTweak={setTweak} />
     </>
   );
+}
+
+function Bootstrapping({ theme }) {
+  // Bare splash while /auth/me is in flight. Theme respected so we don't
+  // flash light-on-dark.
+  const isDark = theme === "dark";
+  return (
+    <div style={{
+      position: "fixed", inset: 0,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      background: isDark ? "#0b0d10" : "#ffffff",
+      color: isDark ? "#9ca3af" : "#6b7280",
+      fontSize: 13, fontFamily: "var(--font-mono)",
+    }}>
+      Celiums Cognition · loading…
+    </div>
+  );
+}
+
+function useTweaks(defaults) {
+  const [values, setValues] = useState(() => {
+    try {
+      const raw = localStorage.getItem("celiums.tweaks");
+      if (!raw) return defaults;
+      return { ...defaults, ...JSON.parse(raw) };
+    } catch { return defaults; }
+  });
+  const set = (k, v) => {
+    setValues((prev) => {
+      const next = { ...prev, [k]: v };
+      try { localStorage.setItem("celiums.tweaks", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  return [values, set];
 }
 
 export function TweaksMount({ values, setTweak }) {
@@ -150,20 +230,19 @@ export function TweaksMount({ values, setTweak }) {
           label="Mode"
           value={values.theme}
           options={["light", "dark"]}
-          onChange={v => setTweak("theme", v)}
+          onChange={(v) => setTweak("theme", v)}
         />
       </TweakSection>
       <TweakSection label="Live polling">
-        <TweakToggle label="Pulse status dot" value={values.showLiveDot} onChange={v => setTweak("showLiveDot", v)} />
+        <TweakToggle label="Pulse status dot" value={values.showLiveDot} onChange={(v) => setTweak("showLiveDot", v)} />
       </TweakSection>
       <TweakSection label="Demo">
-        <button className="celiums-btn sm" style={{ width: "100%" }} onClick={() => {
+        <button className="celiums-btn sm" style={{ width: "100%" }} onClick={async () => {
+          try { await authLogout(); } catch {}
           localStorage.clear();
           window.location.reload();
-        }}>↻ Reset · re-run onboarding</button>
+        }}>↻ Sign out + reset</button>
       </TweakSection>
     </TweaksPanel>
   );
 }
-
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);

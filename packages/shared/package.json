@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@celiumsai/cognition-engine": "workspace:*",
+    "otpauth": "^9.3.2",
     "pg": "^8.20.0"
   },
   "devDependencies": {

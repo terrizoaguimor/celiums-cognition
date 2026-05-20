@@ -189,6 +189,9 @@ importers:
       '@celiumsai/cognition-engine':
         specifier: workspace:*
         version: link:../engine
+      otpauth:
+        specifier: ^9.3.2
+        version: 9.5.1
       pg:
         specifier: ^8.20.0
         version: 8.21.0
@@ -994,6 +997,10 @@ packages:
   '@napi-rs/canvas@0.1.100':
     resolution: {integrity: sha512-xglYA6q3XO5P3BNJYxVZ1IV7DLVjp1Py6nwag88YntrS+3vKHyYcMqXVS4ZztJmwz2uGvz1FWhI/4LgbR5uQDA==}
     engines: {node: '>= 10'}
+
+  '@noble/hashes@2.2.0':
+    resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
+    engines: {node: '>= 20.19.0'}
 
   '@nodable/entities@2.1.0':
     resolution: {integrity: sha512-nyT7T3nbMyBI/lvr6L5TyWbFJAI9FTgVRakNoBqCD+PmID8DzFrrNdLLtHMwMszOtqZa8PAOV24ZqDnQrhQINA==}
@@ -2263,6 +2270,9 @@ packages:
     resolution: {integrity: sha512-0FQLteQ/ANJGLF0wikyPZkVJxp6Z3neb2GiWD4GZN+jUFoVFu4hbbYelIMWCI0p8JANgF9WSmci2weUlVIQ3kQ==}
     engines: {node: '>=22.19.0'}
     hasBin: true
+
+  otpauth@9.5.1:
+    resolution: {integrity: sha512-fJmDAHc8wImfqqqOXIlBvT1dEKrZK0Cmb2VEgScpNTolCz0PHh6ExUZGv4sLtOsWNaHCQlD+rRqaPgnoxFoZjQ==}
 
   p-finally@1.0.0:
     resolution: {integrity: sha512-LICb2p9CB7FS+0eR1oqWnHhp0FljGLZCWBE9aix0Uye9W8LTQPwMTYVGWQWIw9RdQiDg4+epXQODwIYJtSJaow==}
@@ -3900,6 +3910,8 @@ snapshots:
       '@napi-rs/canvas-win32-x64-msvc': 0.1.100
     optional: true
 
+  '@noble/hashes@2.2.0': {}
+
   '@nodable/entities@2.1.0': {}
 
   '@openclaw/fs-safe@0.2.4':
@@ -5148,6 +5160,10 @@ snapshots:
       - supports-color
       - tree-sitter
       - utf-8-validate
+
+  otpauth@9.5.1:
+    dependencies:
+      '@noble/hashes': 2.2.0
 
   p-finally@1.0.0: {}
 

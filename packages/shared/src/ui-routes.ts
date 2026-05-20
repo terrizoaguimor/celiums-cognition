@@ -22,6 +22,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as net from "node:net";
 import { Pool } from "pg";
+import { makeAuthRouter, type AuthRouter } from "./auth-routes.js";
 
 // ─── small helpers ─────────────────────────────────────────────────────
 
@@ -461,6 +462,252 @@ async function skillDetail(
   }
 }
 
+// ─── memory / journal / ethics handlers ────────────────────────────────
+
+/** Read pagination params with safe caps. */
+function paginate(req: IncomingMessage): { limit: number; offset: number } {
+  const q = parseQuery(req);
+  let limit = parseInt(q.get("limit") ?? "20", 10);
+  let offset = parseInt(q.get("offset") ?? "0", 10);
+  if (!Number.isFinite(limit) || limit <= 0) limit = 20;
+  if (!Number.isFinite(offset) || offset < 0) offset = 0;
+  limit = Math.min(limit, 200);
+  offset = Math.min(offset, 1_000_000);
+  return { limit, offset };
+}
+
+/** GET /api/celiums-cognition/memories
+ *  List recent memories, paginated. Optional ?q= filters by content ILIKE.
+ *  Single-account → no user_id filter (everything belongs to the operator). */
+async function memoriesList(
+  ctx: UiRouterContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const { limit, offset } = paginate(req);
+  const q = parseQuery(req).get("q")?.trim() ?? "";
+  try {
+    const params: unknown[] = [];
+    let where = "";
+    if (q) {
+      params.push(`%${q}%`);
+      // idx_memories_content_trgm makes ILIKE practical at scale.
+      where = `WHERE content ILIKE $${params.length}`;
+    }
+    params.push(limit, offset);
+    const { rows } = await ctx.pool.query(
+      `SELECT id, user_id, project_id, session_id, content, summary,
+              memory_type, scope, importance, emotional_valence,
+              emotional_arousal, emotional_dominance, confidence,
+              strength, retrieval_count, last_retrieved_at, state,
+              tags, created_at, updated_at
+         FROM memories ${where}
+        ORDER BY created_at DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+    const { rows: countRows } = await ctx.pool.query(
+      `SELECT count(*)::int AS n FROM memories ${q ? "WHERE content ILIKE $1" : ""}`,
+      q ? [`%${q}%`] : [],
+    );
+    sendJson(res, 200, {
+      memories: rows,
+      total: countRows[0]?.n ?? 0,
+      limit,
+      offset,
+    });
+  } catch (err) {
+    sendError(res, 500, "DB_ERROR", String(err));
+  }
+}
+
+/** GET /api/celiums-cognition/journal/recent
+ *  Most recent journal entries with the SHA-chained hash for verification. */
+async function journalRecent(
+  ctx: UiRouterContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  // Engine table is `agent_journal` (no per-user table because the engine
+  // is single-tenant at this layer; the user_id column lives on each row
+  // when the dispatcher passes it through, but single-account plugin
+  // ignores it for display).
+  const { limit, offset } = paginate(req);
+  try {
+    const { rows } = await ctx.pool.query(
+      `SELECT id, agent_id, session_id, entry_type, content, importance,
+              written_at, prev_hash, hash, conversation_id, valence,
+              valence_reason, visibility, tags, preceded_by
+         FROM agent_journal
+        ORDER BY written_at DESC
+        LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    );
+    const { rows: countRows } = await ctx.pool.query(
+      `SELECT count(*)::int AS n FROM agent_journal`,
+    );
+    sendJson(res, 200, {
+      entries: rows,
+      total: countRows[0]?.n ?? 0,
+      limit,
+      offset,
+    });
+  } catch (err) {
+    sendError(res, 500, "DB_ERROR", String(err));
+  }
+}
+
+/** GET /api/celiums-cognition/ethics/events
+ *  Audit-log entries from the ethics pipeline. ?decision=block|flag|allow|all
+ *  ?law=1|2|3 (Three Laws) optional. */
+async function ethicsEvents(
+  ctx: UiRouterContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const { limit, offset } = paginate(req);
+  const q = parseQuery(req);
+  const decision = (q.get("decision") ?? "all").toLowerCase();
+  const law = q.get("law");
+  try {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (decision === "block" || decision === "flag" || decision === "allow") {
+      params.push(decision);
+      where.push(`final_decision = $${params.length}`);
+    } else if (decision === "blocked") {
+      where.push(`blocked = true`);
+    }
+    if (law && /^[123]$/.test(law)) {
+      params.push(parseInt(law, 10));
+      where.push(`law_violated = $${params.length}`);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    params.push(limit, offset);
+    const { rows } = await ctx.pool.query(
+      `SELECT id, created_at, user_id, law_violated, confidence, reason,
+              action_attempted, blocked, content_hash, detected_categories,
+              scores, final_decision
+         FROM ethics_audit ${whereSql}
+        ORDER BY created_at DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+    const { rows: countRows } = await ctx.pool.query(
+      `SELECT count(*)::int AS n FROM ethics_audit ${whereSql}`,
+      params.slice(0, params.length - 2),
+    );
+    sendJson(res, 200, {
+      events: rows,
+      total: countRows[0]?.n ?? 0,
+      limit,
+      offset,
+    });
+  } catch (err) {
+    sendError(res, 500, "DB_ERROR", String(err));
+  }
+}
+
+/** GET /api/celiums-cognition/activity/sparklines
+ *  Returns 24 hourly buckets (oldest → newest) for each activity stream so
+ *  the Overview tab can render sparklines without per-row math on the
+ *  client. */
+async function activitySparklines(
+  ctx: UiRouterContext,
+  _req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  // generate_series of hour buckets, left-joined with counts. Returns 24
+  // rows even when a stream is empty. All four queries run in parallel.
+  const bucketSql = (table: string, tsCol: string, extraWhere = ""): string =>
+    `WITH buckets AS (
+       SELECT generate_series(
+                date_trunc('hour', now()) - INTERVAL '23 hours',
+                date_trunc('hour', now()),
+                INTERVAL '1 hour'
+              ) AS bucket_start
+     ),
+     hits AS (
+       SELECT date_trunc('hour', ${tsCol}) AS bucket_start, count(*)::int AS n
+         FROM ${table}
+        WHERE ${tsCol} >= now() - INTERVAL '24 hours'
+          ${extraWhere}
+        GROUP BY 1
+     )
+     SELECT b.bucket_start, COALESCE(h.n, 0) AS n
+       FROM buckets b LEFT JOIN hits h USING (bucket_start)
+      ORDER BY b.bucket_start ASC`;
+
+  const safe = async (sql: string): Promise<number[]> => {
+    try {
+      const { rows } = await ctx.pool.query(sql);
+      return rows.map((r) => Number(r.n ?? 0));
+    } catch {
+      return new Array(24).fill(0);
+    }
+  };
+
+  const [memories, journal, blocks, flags] = await Promise.all([
+    safe(bucketSql("memories", "created_at")),
+    safe(bucketSql("agent_journal", "written_at")),
+    safe(bucketSql("ethics_audit", "created_at", `AND (final_decision = 'block' OR blocked = true)`)),
+    safe(bucketSql("ethics_audit", "created_at", `AND final_decision = 'flag'`)),
+  ]);
+
+  sendJson(res, 200, {
+    bucket_minutes: 60,
+    bucket_count: 24,
+    memories,
+    journal,
+    ethics_blocks: blocks,
+    ethics_flags: flags,
+  });
+}
+
+/** GET /api/celiums-cognition/activity/recent
+ *  Last 12 events across memories, journal, ethics — unioned + sorted by
+ *  timestamp. Each row carries a `type` discriminator for the Overview
+ *  feed. */
+async function activityRecent(
+  ctx: UiRouterContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const { limit } = paginate(req);
+  const lim = Math.min(limit, 50);
+  try {
+    const sql = `
+      WITH mem AS (
+        SELECT 'memory'::text AS type, id::text AS id, created_at AS ts,
+               left(content, 240) AS text, tags::text AS extra,
+               importance::numeric AS score
+          FROM memories
+         ORDER BY created_at DESC LIMIT $1
+      ),
+      jrn AS (
+        SELECT 'journal'::text AS type, id::text, written_at AS ts,
+               left(content, 240) AS text, entry_type AS extra,
+               importance::numeric AS score
+          FROM agent_journal
+         ORDER BY written_at DESC LIMIT $1
+      ),
+      eth AS (
+        SELECT 'ethics'::text AS type, id::text, created_at AS ts,
+               left(reason, 240) AS text,
+               COALESCE(final_decision, CASE WHEN blocked THEN 'block' ELSE 'allow' END) AS extra,
+               confidence::numeric AS score
+          FROM ethics_audit
+         ORDER BY created_at DESC LIMIT $1
+      )
+      SELECT * FROM mem UNION ALL SELECT * FROM jrn UNION ALL SELECT * FROM eth
+       ORDER BY ts DESC LIMIT $1`;
+    const { rows } = await ctx.pool.query(sql, [lim]);
+    sendJson(res, 200, { events: rows });
+  } catch (err) {
+    sendError(res, 500, "DB_ERROR", String(err));
+  }
+}
+
 /** GET /api/celiums-cognition/version-check
  *  Stub: returns current === latest. Wire to ClawHub/GitHub release feed later. */
 async function versionCheck(
@@ -488,6 +735,11 @@ export interface UiRoutes {
   pillars: UiRouteHandler;
   skillsSearch: UiRouteHandler;
   skillDetail: UiRouteHandler;
+  memoriesList: UiRouteHandler;
+  journalRecent: UiRouteHandler;
+  ethicsEvents: UiRouteHandler;
+  activitySparklines: UiRouteHandler;
+  activityRecent: UiRouteHandler;
   versionCheck: UiRouteHandler;
   /** Prefix handler that dispatches /api/celiums-cognition/* by parsing the
    *  path. Use this single handler with registerHttpRoute({match:"prefix"}). */
@@ -495,6 +747,8 @@ export interface UiRoutes {
 }
 
 export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
+  const auth: AuthRouter = makeAuthRouter({ pool: ctx.pool, logger: ctx.logger });
+
   const h = {
     health: (req: IncomingMessage, res: ServerResponse) => health(ctx, req, res),
     counts: (req: IncomingMessage, res: ServerResponse) => counts(ctx, req, res),
@@ -503,23 +757,74 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
       skillsSearch(ctx, req, res),
     skillDetail: (req: IncomingMessage, res: ServerResponse) =>
       skillDetail(ctx, req, res),
+    memoriesList: (req: IncomingMessage, res: ServerResponse) =>
+      memoriesList(ctx, req, res),
+    journalRecent: (req: IncomingMessage, res: ServerResponse) =>
+      journalRecent(ctx, req, res),
+    ethicsEvents: (req: IncomingMessage, res: ServerResponse) =>
+      ethicsEvents(ctx, req, res),
+    activitySparklines: (req: IncomingMessage, res: ServerResponse) =>
+      activitySparklines(ctx, req, res),
+    activityRecent: (req: IncomingMessage, res: ServerResponse) =>
+      activityRecent(ctx, req, res),
     versionCheck: (req: IncomingMessage, res: ServerResponse) =>
       versionCheck(ctx, req, res),
   };
+
+  // Endpoints the SPA needs BEFORE the user is authenticated (bootstrap +
+  // signup/login). Everything else gates on an active session.
+  const PUBLIC_ENDPOINTS = new Set([
+    "/health",
+    "",
+    "/",
+    "/version-check",
+  ]);
+
+  async function requireActiveSession(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<boolean> {
+    const sess = await auth.resolveSession(req);
+    if (!sess || sess.session.scope !== "active") {
+      sendError(res, 401, "AUTH_REQUIRED", "active session required");
+      return false;
+    }
+    return true;
+  }
 
   const dispatch: UiRouteHandler = async (req, res) => {
     const path = (req.url || "/").split("?")[0];
     // Strip plugin prefix if present — gateway routes by prefix match
     const p = path.replace(/^.*?\/api\/celiums-cognition/, "");
+
+    // Auth subtree — the auth router handles its own method dispatch.
+    if (p === "/auth" || p.startsWith("/auth/")) {
+      return auth.dispatch(req, res, p.replace(/^\/auth/, "") || "/");
+    }
+
     if (req.method !== "GET") {
       return sendError(res, 405, "METHOD_NOT_ALLOWED", `${req.method} not allowed`);
     }
-    if (p === "" || p === "/" || p === "/health") return h.health(req, res);
+
+    // Public bootstrap endpoints. /health is intentionally public so the
+    // SPA can show the install status even before signup.
+    if (PUBLIC_ENDPOINTS.has(p)) {
+      if (p === "" || p === "/" || p === "/health") return h.health(req, res);
+      if (p === "/version-check") return h.versionCheck(req, res);
+    }
+
+    // Everything below requires an active session.
+    if (!(await requireActiveSession(req, res))) return;
+
     if (p === "/counts") return h.counts(req, res);
     if (p === "/pillars") return h.pillars(req, res);
-    if (p === "/version-check") return h.versionCheck(req, res);
     if (p === "/skills") return h.skillsSearch(req, res);
     if (p.startsWith("/skills/")) return h.skillDetail(req, res);
+    if (p === "/memories") return h.memoriesList(req, res);
+    if (p === "/journal/recent") return h.journalRecent(req, res);
+    if (p === "/ethics/events") return h.ethicsEvents(req, res);
+    if (p === "/activity/sparklines") return h.activitySparklines(req, res);
+    if (p === "/activity/recent") return h.activityRecent(req, res);
     sendError(res, 404, "NOT_FOUND", `no route for ${p}`);
   };
 
