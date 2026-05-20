@@ -29,7 +29,9 @@
     "build": "tsup && rm -rf dist/compose && cp -R src/compose dist/compose",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "echo '(hard E2E smoke is run against a live OpenClaw — see docs)'",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "prepack": "node scripts/prepack.mjs",
+    "postpack": "node scripts/postpack.mjs"
   },
   "dependencies": {
     "@celiums/types": "^0.1.1",
