@@ -506,6 +506,87 @@ export const handleEthicsTrace: McpToolHandler = async (args, ctx) => {
     };
 
     recordEthicsTrace(ctx.userId, trace);
+
+    // celiums-cognition extension (2026-05-20): persist an ethics_audit
+    // row when the pipeline produced a block. Done here in the handler
+    // (NOT in evaluateFullPipeline) to keep the engine pipeline a pure
+    // function — DB side effects live in the call site.
+    //
+    // Two upstream gaps motivate this: (1) logEthicsAudit (ethics-audit.ts)
+    // has the pg INSERT commented out so it only logs to stdout; (2)
+    // logEthicsAudit is invoked only in mode==='radar', and the default
+    // mode here is gate, so the audit hook never fires for the typical
+    // ethics_trace caller. Both of those are pre-existing in upstream
+    // celiums-memory — see docs/upstream-findings/ for the writeup.
+    //
+    // Best-effort: never throws, never blocks the response.
+    const aggregatedDecision = trace.aggregation.final_decision;
+    const wasBlocked =
+      result.violations.some((v: any) => v.blocked) ||
+      aggregatedDecision === 'block';
+    const pool = (ctx as any).pool as
+      | { query: (sql: string, params?: any[]) => Promise<any> }
+      | undefined;
+    if (pool && wasBlocked) {
+      try {
+        const { createHash } = await import('node:crypto');
+        const contentHash = createHash('sha256').update(content).digest('hex').slice(0, 16);
+        const firstBlocked =
+          result.violations.find((v: any) => v.blocked) ||
+          result.violations[0];
+        const reason = firstBlocked?.reason ?? 'Pipeline-produced block';
+        const rawLaw = (firstBlocked as any)?.law;
+        const lawId =
+          rawLaw === 1 || rawLaw === 2 || rawLaw === 3 ? rawLaw : 1;
+        const categories = Array.from(
+          new Set(
+            result.violations
+              .map((v: any) => v.category)
+              .filter((c: unknown): c is string => typeof c === 'string' && !!c),
+          ),
+        );
+        const scores = {
+          layerA_arousal: result.layerA?.arousal ?? 0,
+          layerA_confidence: result.layerA?.confidence ?? 0,
+          layerB_decision: (result as any).layerB?.decision ?? null,
+          layerB_risk: (result as any).layerB?.riskScore ?? null,
+          layerC_verdict: (result as any).layerC?.aggregatedVerdict ?? null,
+          layerC_convergence: (result as any).layerC?.convergenceScore ?? null,
+          layerK_decision: (result as any).layerK?.decision ?? null,
+          score: result.score,
+        };
+        const conf = Math.min(
+          1,
+          Math.max(0, Number(firstBlocked?.confidence ?? 0.5)),
+        );
+        await pool.query(
+          `INSERT INTO ethics_audit (user_id, law_violated, confidence, reason,
+             blocked, content_hash, detected_categories, scores, final_decision)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            ctx.userId || null,
+            lawId,
+            conf,
+            reason,
+            true,
+            contentHash,
+            categories,
+            JSON.stringify(scores),
+            aggregatedDecision,
+          ],
+        );
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          JSON.stringify({
+            type: 'ethics_audit_persist_failed',
+            error: err instanceof Error ? err.message : String(err),
+            content_hash_prefix: content.slice(0, 20),
+          }),
+        );
+      }
+    }
+
     return ok(JSON.stringify(trace, null, 2));
   }
 
