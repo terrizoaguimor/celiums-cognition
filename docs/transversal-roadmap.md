@@ -1,10 +1,16 @@
 # Roadmap transversal — Celiums Cognition × OpenClaw SDK
 
-**Tema:** Hoy el plugin vive en su propia isla (tools + UI + auth). El SDK
-de OpenClaw expone ~50 seams que permitirían a Cognition hilarse en
-CADA paso del ciclo de vida del gateway. Este documento inventaría los
-seams disponibles, compara contra lo que ya usamos, y propone un plan
-de adopción priorizado.
+> **Status (2026-05-21): ALL SIX PHASES SHIPPED + VERIFIED IN PRODUCTION.**
+> A→F closed between 2026-05-20 and 2026-05-21. See `CLAUDE.md §5.1`
+> for commit map. This document is preserved as the design rationale
+> behind each Fase; the active project authority is now
+> `docs/celiums-cognition-doctrine.md`.
+
+**Tema (original):** El plugin vivía en su propia isla (tools + UI +
+auth). El SDK de OpenClaw expone ~50 seams que permiten a Cognition
+hilarse en cada paso del ciclo de vida del gateway. Este documento
+inventarió los seams disponibles, comparó contra lo que ya se usaba, y
+propuso el plan de adopción priorizado que después se ejecutó.
 
 Verificado contra `/Volumes/My Book/Documents/openclaw-study` (OpenClaw
 2026.5.18+), commit `78d226bb`.
@@ -301,6 +307,22 @@ las invocations directas del agente.
 - Lista de register* completa en
   `openclaw-study/src/plugins/types.ts:2492-2860`.
 
-Próximo paso: Mario aprueba el orden A→B→C→… (o reordena), y arranco la
-implementación por fase. Cada fase es 1-2 commits + audit pass + doc
-update.
+## Cierre — 2026-05-21
+
+Todas las fases A-F shipearon. Mapa de commits:
+
+- Fase A — `11cacf1`
+- Fase B — `b56f0f2` (sobre `d492e90`/`f39fb17`/`9babbe4`)
+- Fase B+ — `2ea13a6`
+- Fase C — commit posterior a la doctrina
+- Fase D — `0153015`
+- Fase E — `a2df9e2`
+- Fase F — `6dbaa57`
+
+Cada fase pasó por: design → verificación de shapes contra código real
+del SDK → implementación con doctrine citations inline → build + typecheck
+verdes → deploy a prod-openclaw + smoke. El gateway corre 7 plugins
+incluyendo celiums-cognition con todos los seams citados arriba activos.
+
+El próximo trabajo es incremental, no fase-shaped: ports + endpoints
++ adapters + dashboard widgets que consumen los seams ya wireados.

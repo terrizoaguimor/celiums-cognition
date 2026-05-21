@@ -327,6 +327,35 @@ export function createCognitionPlugin(edition: EditionOptions) {
       const userId = cfg.userId ?? "default";
       const trivialSkip = safeRegex(cfg.autoRecall.trivialSkipRegex);
 
+      // ── Readiness gate (audit P0 #4) ───────────────────────────────────
+      // The lifecycle order is: register() runs SYNCHRONOUSLY; OpenClaw
+      // then calls our `service.start` ASYNCHRONOUSLY, where we apply
+      // migrations and seed. Hooks (api.on) registered during register()
+      // can fire BEFORE service.start completes — at which point the
+      // tables Fase B/C/D/E/F handlers write to (agent_journal,
+      // agent_lineage, ethics_audit) may not yet exist. The handlers
+      // try/catch around the DB writes today, so the symptom is silent
+      // data loss rather than a crash — but the audit flagged the
+      // pattern as P0 because the catches mask the failure.
+      //
+      // `ready` is the single bit gating db-writing hooks. service.start
+      // flips it true AFTER migrations + seed land. Each DB-touching
+      // handler checks it at the top via `gateReady()` and returns
+      // undefined (the SDK's "no-op" return) when the gate is closed.
+      //
+      // Hooks that don't touch our tables (before_compaction observation,
+      // ethics gate eval which is in-memory, subagent_spawned info log)
+      // are not gated — they were never going to fail on schema-missing.
+      let ready = false;
+      const gateReady = (): boolean => {
+        if (!ready) {
+          api.logger.warn?.(
+            `celiums-cognition: hook fired before service.start completed — skipping (readiness gate)`,
+          );
+        }
+        return ready;
+      };
+
       // Lazy engine init (memoized) — createMemoryEngine connects storage and
       // is async + heavy; defer until first hook/tool actually needs it.
       let enginePromise: Promise<MemoryEngineWithStore> | undefined;
@@ -384,7 +413,18 @@ export function createCognitionPlugin(edition: EditionOptions) {
           KNOWLEDGE_DATABASE_URL:
             process.env.KNOWLEDGE_DATABASE_URL ??
             process.env.CELIUMS_DATABASE_URL ??
-            "postgresql://celiums:celiums@127.0.0.1:5432/celiums_memory",
+            // Audit P0 #3: the legacy default password lives here as a
+            // backward-compat shim for pre-rotation installs. New installs
+            // populate CELIUMS_DATABASE_URL from the hard-edition's
+            // credentials.env loader; the warn on first connect surfaces
+            // the issue to operators still on the default.
+            (() => {
+              api.logger.warn?.(
+                `${edition.id}: KNOWLEDGE_DATABASE_URL falling back to legacy default credentials — ` +
+                `set CELIUMS_DATABASE_URL or run setup.ts to generate a unique password.`,
+              );
+              return "postgresql://celiums:celiums@127.0.0.1:5432/celiums_memory";
+            })(),
         };
         moduleStoreCached = buildModuleStore(env);
         return moduleStoreCached;
@@ -507,6 +547,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             },
             hookCtx: { agentId?: string; sessionId?: string; sessionKey?: string; conversationId?: string },
           ) => {
+            if (!gateReady()) return undefined;
             try {
               const engine = await getEngine();
               const pool = extractEnginePool(engine);
@@ -616,6 +657,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             },
             _ctx: unknown,
           ) => {
+            if (!gateReady()) return undefined;
             if (event.targetKind !== "subagent") return undefined;
             try {
               const engine = await getEngine();
@@ -730,6 +772,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             event: { sessionId: string; sessionKey?: string; resumedFrom?: string },
             hookCtx: { agentId?: string; sessionId?: string; sessionKey?: string },
           ) => {
+            if (!gateReady()) return undefined;
             try {
               const engine = await getEngine();
               const pool = extractEnginePool(engine);
@@ -796,6 +839,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             },
             hookCtx: { agentId?: string; sessionId?: string; sessionKey?: string },
           ) => {
+            if (!gateReady()) return undefined;
             try {
               const engine = await getEngine();
               const pool = extractEnginePool(engine);
@@ -1039,6 +1083,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
           event: { prompt?: string; messages?: unknown; agentId?: string },
           hookCtx: { sessionKey?: string; sessionId?: string; agentId?: string; conversationId?: string },
         ) => {
+          if (!gateReady()) return undefined;
           const q = (latestUserText(event.messages) ?? event.prompt ?? "").trim();
           if (q.length < 5 || (trivialSkip && trivialSkip.test(q))) return undefined;
           try {
@@ -1127,7 +1172,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             };
           } catch (err) {
             // Best-effort: try the lightweight recall path before giving up.
-            api.logger.warn(`celiums-cognition: turn_context failed (${String(err)}); falling back to recall-only`);
+            api.logger.warn?.(`celiums-cognition: turn_context failed (${String(err)}); falling back to recall-only`);
             try {
               const engine = await getEngine();
               const recalled = await withTimeout(
@@ -1137,7 +1182,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
               if (!recalled?.memories?.length || !recalled.assembledContext) return undefined;
               return { prependContext: recalled.assembledContext };
             } catch (err2) {
-              api.logger.warn(`celiums-cognition: recall fallback also failed: ${String(err2)}`);
+              api.logger.warn?.(`celiums-cognition: recall fallback also failed: ${String(err2)}`);
               return undefined;
             }
           }
@@ -1152,6 +1197,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             event: { success?: boolean; messages?: unknown; agentId?: string },
             ctx: { sessionKey?: string; sessionId?: string; agentId?: string; conversationId?: string; requester?: { channel?: string; accountId?: string; to?: string; threadId?: string | number } },
           ) => {
+            if (!gateReady()) return;
             // Remember this agent as the parent-of-record for its
             // current thread, so the next subagent_spawning fired from
             // the same thread can identify us as the parent. The SDK
@@ -1173,7 +1219,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
               const engine = await getEngine();
               await engine.store([{ content: text, userId } as never]);
             } catch (err) {
-              api.logger.warn(`celiums-cognition: auto-capture failed: ${String(err)}`);
+              api.logger.warn?.(`celiums-cognition: auto-capture failed: ${String(err)}`);
             }
           },
         );
@@ -1229,6 +1275,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             },
             ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
           ) => {
+            if (!gateReady()) return;
             const userText = latestUserText(event.messages) ?? event.prompt ?? "";
             const assistantText = latestAssistantText(event.messages) ?? "";
             const toolCalls = countToolCalls(event.messages);
@@ -1505,6 +1552,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
       api.on(
         "heartbeat_prompt_contribution",
         async (event: { sessionKey?: string; heartbeatName?: string }, hookCtx: { agentId?: string }) => {
+          if (!gateReady()) return undefined;
           try {
             const snapshot = await composeHeartbeatSnapshot({
               ...autonomyDeps,
@@ -1531,6 +1579,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
       api.on(
         "tool_result_persist",
         (event: { toolName?: string; toolCallId?: string; isSynthetic?: boolean }, hookCtx: { agentId?: string }) => {
+          if (!ready) return undefined; // hot path: skip gateReady() warn log
           const aid = hookCtx?.agentId ?? autonomyDeps.agentId;
           const decision = decideToolResultJournal(aid, event);
           if (!decision) return undefined;
@@ -1576,7 +1625,12 @@ export function createCognitionPlugin(edition: EditionOptions) {
         id: edition.id,
         start: async () => {
           if (!edition.bootstrap) {
-            api.logger.info(`${edition.id}: ready (engine init is lazy)`);
+            // Edition without infra bootstrap (e.g. Lite with pglite or
+            // remote DB). Migrations + seed are skipped here because
+            // the edition provides them another way; the readiness gate
+            // still opens so DB-writing hooks can fire on first request.
+            ready = true;
+            api.logger.info(`${edition.id}: ready (engine init is lazy, readiness gate open)`);
             return;
           }
           const engineCfg = edition.resolveEngineConfig(cfg, api);
@@ -1610,6 +1664,8 @@ export function createCognitionPlugin(edition: EditionOptions) {
             );
             await runMigrations(edition, ec, api);
             await runSeed(edition, ec, api);
+            ready = true;
+            api.logger.info(`${edition.id}: readiness gate open — db-writing hooks now active`);
             return;
           }
           api.logger.info(
@@ -1620,6 +1676,8 @@ export function createCognitionPlugin(edition: EditionOptions) {
             api.logger.info(`${edition.id}: ready (bootstrap completed)`);
             await runMigrations(edition, ec, api);
             await runSeed(edition, ec, api);
+            ready = true;
+            api.logger.info(`${edition.id}: readiness gate open — db-writing hooks now active`);
           } catch (err) {
             api.logger.warn?.(
               `${edition.id}: bootstrap failed — ${err instanceof Error ? err.message : String(err)}; engine will surface a clearer error at first tool call`,
@@ -1627,7 +1685,8 @@ export function createCognitionPlugin(edition: EditionOptions) {
           }
         },
         stop: () => {
-          api.logger.info(`${edition.id}: stopped`);
+          ready = false;
+          api.logger.info(`${edition.id}: stopped (readiness gate closed)`);
         },
       });
 
@@ -1687,13 +1746,16 @@ export function createCognitionPlugin(edition: EditionOptions) {
               await router.apiPrefix(req, res);
             } catch (err) {
               if (!res.headersSent) {
+                api.logger.warn?.(
+                  `${edition.id}: ui router init failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+                );
                 res.statusCode = 503;
                 res.setHeader("Content-Type", "application/json");
                 res.end(
                   JSON.stringify({
                     error: {
                       code: "UI_ROUTER_UNAVAILABLE",
-                      message: err instanceof Error ? err.message : String(err),
+                      message: "ui router unavailable",
                     },
                   }),
                 );

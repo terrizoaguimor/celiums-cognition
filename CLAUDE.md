@@ -265,6 +265,63 @@ differentiator vs. memory-core / memory-lancedb (file-based, simple).
 
 Day-1 target = Fases 0–2. Hard E2E = Day 2.
 
+### 5.1 Transversal roadmap (`docs/transversal-roadmap.md`) — CLOSED
+
+Six-phase plan to weave the plugin into every layer of the OpenClaw
+agent lifecycle. All six phases shipped + verified in prod-openclaw
+between 2026-05-20 and 2026-05-21.
+
+- [x] Fase A — Continuity over context limit (registerCompactionProvider +
+      before/after_compaction hooks; deterministic summary; commit `11cacf1`)
+- [x] Fase B — Subagent lifecycle (subagent_spawning/spawned/ended +
+      lineage tree + loop guard + briefing; migration 014_agent_lineage;
+      commits `d492e90` → `f39fb17` → `9babbe4` → `b56f0f2`)
+- [x] Fase B+ — Lineage endpoint + sidebar indent + drawer UI
+      (commit `2ea13a6`)
+- [x] Fase C — Session lifecycle (session_start/end with auto-explained
+      truncation; commit on `main` after the doctrine landed)
+- [x] Fase D — Operator UX: 5 sessionActions (remember/recall/limbic/
+      forget/status) + controlUiDescriptor + `/operator-status` HTTP
+      (commit `0153015`)
+- [x] Fase E — Governance: registerToolMetadata + registerSecurityAudit
+      Collector + ethics gate enriched with category/source
+      (commit `a2df9e2`)
+- [x] Fase F — Autonomy + channel surface: heartbeat_prompt_contribution
+      + tool_result_persist (throttled) + POST /inbox/inject mailbox
+      bridge (commit `6dbaa57`)
+
+The doctrine that drove every Fase from C onwards lives in
+`docs/celiums-cognition-doctrine.md` (40 numbered principles + 8
+anti-patterns). New work cites it inline (`// applies P1/M4/G3`).
+
+### 5.2 P0 hardening pass — 2026-05-21 — CLOSED
+
+Atlas-validated audit found 5 P0 (security/correctness) + 4 P0 (docs
+drift). All fixed in this commit batch:
+
+- [x] Logger crash risk: 3× `api.logger.warn(...)` without `?.` → `warn?.`
+- [x] Error leaks post-auth (4 sites): inboxInject, limbicState,
+      previewPrompt+dynamicError, ensureRouter fallback → logger gets
+      verbose trace, wire gets opaque message (G1)
+- [x] Error leak pre-auth in auth-routes dispatcher top-level catch →
+      same pattern (no schema disclosure, no account existence leak)
+- [x] Rate-limit bypass via `clientIp` trust chain → trust forwarded
+      headers only when `CELIUMS_TRUST_PROXY_HEADERS=true` is set
+- [x] Lifecycle race (hooks fire before migrations) → `ready` readiness
+      gate flipped by service.start after migrations + seed
+- [x] Hardcoded Postgres credentials → setup.ts mints 256-bit password
+      into `~/.celiums-cognition/credentials.env` (chmod 600) on first
+      install; hard/src loads it back; legacy `celiums:celiums` kept
+      as compat shim with LOUD warn for pre-rotation installs
+
+Notes on `HANDOFF.md` (CLAUDE.md §0 referenced "Authority = HANDOFF.md"):
+the original handoff doc lived at `/Users/mars/Downloads/HANDOFF.md`
+and was never mirrored into this repo. Its decisions D1–D10 are
+documented inline above and have been overtaken by the transversal
+roadmap + doctrine. References to HANDOFF §X in code comments are
+historical anchors, not load-bearing — the current authority is the
+doctrine.
+
 ## 6. COMMANDS
 
 ```

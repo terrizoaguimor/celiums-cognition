@@ -906,12 +906,13 @@ async function inboxInject(
       session_key: result.sessionKey,
     });
   } catch (err) {
-    sendError(
-      res,
-      500,
-      "ENQUEUE_FAILED",
-      err instanceof Error ? err.message : String(err),
+    // Doctrine G1: reason is plugin-local; message must not leak
+    // gateway-internal detail to wire. Logger keeps the verbose trace
+    // for operator audit.
+    ctx.logger?.warn?.(
+      `inbox/inject enqueue failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
     );
+    sendError(res, 500, "ENQUEUE_FAILED", "enqueue failed");
   }
 }
 
@@ -1169,7 +1170,10 @@ async function limbicState(
       timezone: tz,
     });
   } catch (err) {
-    sendError(res, 500, "LIMBIC_ERROR", err instanceof Error ? err.message : String(err));
+    ctx.logger?.warn?.(
+      `limbic-state failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+    );
+    sendError(res, 500, "LIMBIC_ERROR", "limbic state unavailable");
   }
 }
 
@@ -1314,10 +1318,9 @@ async function previewPrompt(
   } catch (err) {
     ctx.logger?.warn?.(`preview-prompt threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
     if (!res.headersSent) {
-      sendError(
-        res, 500, "PREVIEW_ERROR",
-        err instanceof Error ? err.message : String(err),
-      );
+      // Doctrine G1: do not surface raw error to wire; the logger above
+      // keeps the verbose trace.
+      sendError(res, 500, "PREVIEW_ERROR", "preview generation failed");
     }
   }
 }
@@ -1394,7 +1397,13 @@ async function previewPromptImpl(
       prependContext = String(tc?.prependContext ?? tc?.context ?? "");
     }
   } catch (err) {
-    dynamicError = err instanceof Error ? err.message : String(err);
+    // Doctrine G1: dynamicError surfaces in the JSON response body
+    // (preview tool for the operator). Verbose trace into the logger;
+    // wire gets a safe class name only.
+    ctx.logger?.warn?.(
+      `preview-prompt dynamic step failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+    );
+    dynamicError = "turn_context unavailable";
   }
 
   // What an LLM would actually see on a real turn = identity + dynamic + static

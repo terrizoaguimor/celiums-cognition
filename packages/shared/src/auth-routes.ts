@@ -81,15 +81,24 @@ function rateLimitCheck(
   return { allowed: true, retryAfterSec: 0, remaining: cfg.max - hits.length };
 }
 
-/** Resolve the client IP for rate-limit bucketing. Honours
- *  `x-forwarded-for` (Cloudflare/Traefik) and `cf-connecting-ip` —
- *  spoofable in raw-internet, but we're behind cloudflared so the
- *  upstream populates these. Falls back to socket.remoteAddress. */
+/** Resolve the client IP for rate-limit bucketing.
+ *
+ *  Doctrine G3: rules layered by source. The forwarded-IP headers
+ *  (`cf-connecting-ip`, `x-forwarded-for`) are only trusted when the
+ *  operator has explicitly told us the plugin sits behind a known
+ *  reverse proxy via `CELIUMS_TRUST_PROXY_HEADERS=true`. Without that
+ *  opt-in, the headers are spoofable in raw-internet — an attacker
+ *  can rotate a random IP per request and trivially bypass the
+ *  per-IP brute-force buckets on `/login` (5/15min) and `/signup`
+ *  (3/hour). When the env is unset we always fall through to the TCP
+ *  peer address, which is the only IP source the gateway controls. */
 function clientIp(req: IncomingMessage): string {
-  const cf = (req.headers["cf-connecting-ip"] as string | undefined)?.split(",")[0]?.trim();
-  if (cf) return cf;
-  const xff = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
-  if (xff) return xff;
+  if (process.env.CELIUMS_TRUST_PROXY_HEADERS === "true") {
+    const cf = (req.headers["cf-connecting-ip"] as string | undefined)?.split(",")[0]?.trim();
+    if (cf) return cf;
+    const xff = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
+    if (xff) return xff;
+  }
   return req.socket?.remoteAddress ?? "unknown";
 }
 
@@ -790,9 +799,18 @@ export function makeAuthRouter(ctx: AuthCtx): AuthRouter {
         }
         sendError(res, 404, "NOT_FOUND", `no auth route for ${req.method} ${subpath}`);
       } catch (err) {
-        ctx.logger?.warn?.(`auth handler error: ${err instanceof Error ? err.message : String(err)}`);
+        // Doctrine G1: this catch sits PRE-AUTH (the dispatcher routes
+        // /auth/signup, /auth/login, /auth/me before any session check).
+        // Any raw err.message here is a schema-disclosure + account-
+        // existence leak (a duplicate-key on accounts_email_key from a
+        // signup race would tell an anonymous caller both the column
+        // name AND that the email is taken). Wire gets an opaque
+        // message; verbose trace lives in the logger.
+        ctx.logger?.warn?.(
+          `auth handler error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+        );
         if (!res.headersSent) {
-          sendError(res, 500, "AUTH_ERROR", err instanceof Error ? err.message : String(err));
+          sendError(res, 500, "AUTH_ERROR", "authentication subsystem error");
         }
       }
     },

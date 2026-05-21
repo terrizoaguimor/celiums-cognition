@@ -1,14 +1,26 @@
-# Celiums Cognition (Hard) — local production stack (HANDOFF §4.1).
-# Brought up by `pnpm celiums-cognition setup` (src/setup.ts).
+# Celiums Cognition (Hard) — local production stack.
+# Brought up by `node dist/setup.js` (or, in service.start, by the
+# adapter's bootstrap fallback).
+#
+# Doctrine I6: health gates per layer (each container has a healthcheck;
+# `docker compose up --wait` blocks until all are healthy).
+# Audit P0 #3 (hardcoded credentials): the Postgres password is taken
+# from $POSTGRES_PASSWORD when provided (setup.ts generates a unique
+# value into ~/.celiums-cognition/credentials.env and passes --env-file
+# to compose). The `:-celiums` fallback is a backward-compat shim for
+# operators with pre-existing installs that already have a PG volume
+# initialized with the legacy default — those installs SHOULD rotate
+# via `ALTER USER celiums WITH PASSWORD '...';` and update credentials.env,
+# but this compose still boots them.
 name: celiums-cognition
 
 services:
   postgres:
     image: pgvector/pgvector:pg17
     environment:
-      POSTGRES_USER: celiums
-      POSTGRES_PASSWORD: celiums
-      POSTGRES_DB: celiums_memory
+      POSTGRES_USER: ${POSTGRES_USER:-celiums}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-celiums}
+      POSTGRES_DB: ${POSTGRES_DB:-celiums_memory}
     # Bind to loopback only. Docker bypasses iptables INPUT chain, so
     # "5432:5432" would expose Postgres to the public interface even if
     # ufw/firewalld block it. The plugin connects via 127.0.0.1.
@@ -17,7 +29,7 @@ services:
     volumes:
       - celiums_pg:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U celiums -d celiums_memory"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-celiums} -d $${POSTGRES_DB:-celiums_memory}"]
       interval: 5s
       timeout: 5s
       retries: 20

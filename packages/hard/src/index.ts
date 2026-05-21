@@ -11,8 +11,47 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { createCognitionPlugin, withEditionProps } from "@celiumsai/cognition-shared";
 import { setup } from "./setup.js";
+
+// Audit P0 #3: prefer a unique, locally-generated password over the
+// legacy insecure default. setup.ts creates ~/.celiums-cognition/credentials.env
+// on first install with a 256-bit random POSTGRES_PASSWORD; this loader
+// reads it back so the plugin connects with the same credentials docker
+// compose used to initdb the volume.
+const CREDS_FILE = join(homedir(), ".celiums-cognition", "credentials.env");
+
+function databaseUrlFromCredentialsFile(): string | null {
+  try {
+    if (!existsSync(CREDS_FILE)) return null;
+    const txt = readFileSync(CREDS_FILE, "utf8");
+    const get = (k: string): string | null => {
+      const m = new RegExp(`^${k}=(.*)$`, "m").exec(txt);
+      return m ? m[1].trim() : null;
+    };
+    const user = get("POSTGRES_USER") ?? "celiums";
+    const password = get("POSTGRES_PASSWORD");
+    const db = get("POSTGRES_DB") ?? "celiums_memory";
+    if (!password) return null;
+    return `postgresql://${user}:${encodeURIComponent(password)}@localhost:5432/${db}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Last-resort fallback when neither env nor credentials file is set.
+ *  Emits a LOUD stderr warning so the operator notices they are running
+ *  with the legacy insecure default before exposing the host. */
+function legacyInsecureFallback(): string {
+  console.warn(
+    "[celiums-cognition] SECURITY WARNING: connecting to Postgres with the " +
+    "legacy default `celiums:celiums` credentials. Run `node dist/setup.js` " +
+    "to mint a unique password, or set CELIUMS_DATABASE_URL explicitly.",
+  );
+  return "postgresql://celiums:celiums@localhost:5432/celiums_memory";
+}
 
 // Migrations live in dist/migrations/ (copied by the build script from
 // ../engine/scripts/migrations/). Service.start applies pending ones via
@@ -47,7 +86,8 @@ export default createCognitionPlugin({
     // createMemoryEngine() auto-detection.
     const databaseUrl =
       process.env.CELIUMS_DATABASE_URL ??
-      "postgresql://celiums:celiums@localhost:5432/celiums_memory";
+      databaseUrlFromCredentialsFile() ??
+      legacyInsecureFallback();
     const qdrantUrl = process.env.CELIUMS_QDRANT_URL ?? "http://localhost:6333";
     const valkeyUrl = process.env.CELIUMS_VALKEY_URL ?? "redis://localhost:6379";
     // BGE-large-en-v1.5 (TEI default) is 1024-dim. The celiums-memory
