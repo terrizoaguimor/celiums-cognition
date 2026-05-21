@@ -5,6 +5,33 @@
 > retrieval, and ~60 cognitive tools — all wired into the agent's
 > lifecycle by default.
 
+---
+
+## Enterprise-grade infrastructure, not a laptop plugin
+
+Celiums Cognition runs a **four-container Docker stack** (Postgres +
+pgvector, Qdrant, Valkey, OpenSearch), downloads ~110 MB of curated
+corpora on first install, and holds ~1.5 GB of RAM steady-state. The
+engine is deliberately heavy because every layer (ethics, journal,
+limbic, hybrid retrieval) needs to run at agent speed — there is no
+"lite mode" by design.
+
+**Designed for:**
+
+- **VPS hosts** dedicated to running OpenClaw (≥ 4 GB RAM, ≥ 2 vCPU,
+  Linux + Docker)
+- **Mac minis** and headless workstations driving an agent fleet
+- **Enterprise OpenClaw deployments** (such as Celiums AI) where the
+  gateway is managed end-to-end by agents and sub-agents — not by a
+  human typing at the terminal
+
+If you're running OpenClaw on a laptop with minimum specs, or for
+one-off experimentation, use the bundled `memory-core` (file-based,
+zero infra) or the official `memory-lancedb` extension instead. Both
+ship with OpenClaw and don't need Docker.
+
+---
+
 ```
 openclaw plugins install clawhub:@celiumsai/cognition
 ```
