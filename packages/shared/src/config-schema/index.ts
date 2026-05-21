@@ -3,11 +3,12 @@
  * Licensed under the Apache License, Version 2.0
  */
 
-// Shared config schema for both editions (HANDOFF §3.2). This object is the
-// single source of truth: it is embedded verbatim into each edition's
-// openclaw.plugin.json `configSchema` (declarative) AND passed to
-// definePluginEntry({ configSchema }) (runtime). Hard/Lite extend the
-// `properties` with their storage-specific keys via `withEditionProps()`.
+// Shared config schema for the plugin. This object is the single
+// source of truth: it is embedded verbatim into openclaw.plugin.json
+// `configSchema` (declarative) AND passed to
+// definePluginEntry({ configSchema }) (runtime). The Hard edition
+// extends `properties` with storage-specific keys via
+// `withEditionProps()`.
 //
 // JSON Schema 2020-12, additionalProperties:false (strict — verified the
 // real memory-core manifest uses the same shape).
@@ -26,9 +27,8 @@ export interface CognitionConfig {
   journal: {
     enabled: boolean;
     /** Auto-write a journal entry at the end of each meaningful agent
-     *  turn (Mario 2026-05-20: "hay que forzar entradas para que la AI
-     *  sepa volver sobre sus propios pasos"). Off by default for Lite,
-     *  on by default for Hard. */
+     *  turn (Mario 2026-05-20: forced entries help the agent retrace
+     *  its own steps). On by default. */
     autoWrite: {
       enabled: boolean;
       /** Minimum length of the user message to consider the turn
@@ -173,7 +173,7 @@ export function deriveEthicsMode(cfg: CognitionConfig): EthicsMode {
   return cfg.ethics.strictMode ? "enforce" : "radar";
 }
 
-/** Merge edition-specific properties (Hard: database.*, Lite: embeddings.*). */
+/** Merge edition-specific properties (Hard: database.*). */
 export function withEditionProps(
   extraProps: Record<string, unknown>,
   extraUiHints: Record<string, unknown> = {},

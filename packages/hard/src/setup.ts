@@ -96,8 +96,8 @@ export async function setup(): Promise<number> {
   const probe = spawnSync("docker", ["compose", "version"], { stdio: "ignore" });
   if (probe.status !== 0) {
     console.error(
-      "[celiums-cognition] Docker (with `docker compose`) is required for the Hard edition.\n" +
-        "Install Docker/OrbStack, or use @celiumsai/cognition-lite (zero infra).",
+      "[celiums-cognition] Docker (with `docker compose`) is required.\n" +
+        "Install Docker or OrbStack and re-run the gateway.",
     );
     return 1;
   }

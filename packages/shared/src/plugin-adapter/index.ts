@@ -30,8 +30,8 @@ import { wireService } from "./wiring/service.js";
 import { wireHttpRoutes } from "./wiring/http.js";
 import { wireCli } from "./wiring/cli.js";
 
-// Re-export public surface so edition packages (packages/hard,
-// packages/lite) and other consumers can keep importing from
+// Re-export public surface so edition packages (packages/hard) and
+// other consumers can keep importing from
 // `@celiumsai/cognition-shared` without knowing the internal split.
 export { type EditionOptions } from "./context.js";
 export { type CognitionConfig } from "../config-schema/index.js";

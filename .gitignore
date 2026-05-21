@@ -10,13 +10,12 @@ dist/
 coverage/
 .vitest/
 
-# corpus is downloaded as a release asset, never tracked (HANDOFF §2.1, §6.6)
+# corpus is downloaded as a release asset, never tracked
 /corpus/*
 !/corpus/.gitkeep
 
-# local data written by the Lite embedded store during dev
+# local data written by the gateway during dev
 .openclaw/
-*.pglite
 
 # env / secrets — NEVER track (HANDOFF §6.6)
 .env

@@ -1,4 +1,3 @@
 # The ethics knowledge corpus (ethics_knowledge.jsonl, ~32 MB) is NOT tracked
 # in git. It is downloaded as a GitHub release asset with SHA-256 verification
-# by the Lite postinstall hook (HANDOFF §4.2, §7) and provisioned for Hard at
-# setup time. This .gitkeep only preserves the directory in the tree.
+# at setup time. This .gitkeep only preserves the directory in the tree.

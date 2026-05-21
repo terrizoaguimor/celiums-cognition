@@ -49,7 +49,7 @@ via `preceded_by`.
 | npm registry reality | `openclaw` latest **stable = 2026.5.18**; `2026.5.19-beta.1` is beta; `2026.5.19` not yet a stable npm release |
 | Plugin compat declared | `openclaw.compat.pluginApi: ">=2026.5.18"`, `openclaw.build.openclawVersion: "2026.5.19"`, optional peer `openclaw: ">=2026.5.18"` |
 | npm scope | `@celiumsai` (D7, reserved by Mario) |
-| pglite + pgvector (RISK #1) | **PASS** — `@electric-sql/pglite@0.4.5` + `@electric-sql/pglite/vector` → pgvector **0.8.1**; `vector(N)`, `<->`, HNSW `vector_cosine_ops` all verified. Fase 4 unblocked, no fallback. |
+| pglite + pgvector (Fase 4 spike) | Verified PASS at scaffold time (`@electric-sql/pglite@0.4.5` + `@electric-sql/pglite/vector` → pgvector **0.8.1**), but **Fase 4 was dropped** (2026-05-21) — no Lite edition ships. Pglite is dead in this repo; Postgres + pgvector via Docker is the only storage path. |
 | Vendor source | celiums-memory working tree `/Volumes/My Book/Documents/celiums-memory` (Fase 2) |
 | Repo | `/Volumes/My Book/Documents/celiums-cognition`, branch `main`, git author `Mario Gutierrez <terrizoaguimor@gmail.com>` |
 
@@ -179,9 +179,10 @@ reference; it is external-installable and does NOT use
 8. **`better-sqlite3` native binary not built** (optional dep; headless
    `--ignore-scripts` install). `smoke-sqlite-real.test.ts` +
    `runtime-bootstrap.test.ts` are resource-gated out in engine
-   `vitest.config.ts` (HANDOFF §6.6: Lite uses pglite/WASM, not
-   better-sqlite3; SqliteAdapter is only the structural base for the
-   Fase-4 pglite adapter). 704 logic tests + typecheck + build all green.
+   `vitest.config.ts`. The Hard edition uses Postgres + Qdrant + Valkey;
+   the SqliteAdapter is dead code carried by the vendored engine and is
+   not exercised in production. 704 logic tests + typecheck + build all
+   green.
 
 ## 3b. PRODUCT DIRECTIVE — auto-bootstrap mandatory (Mario, 2026-05-20)
 
@@ -216,9 +217,9 @@ full bootstrap automatically:
 
 **Fase 5 README must state upfront**: *"This is an enterprise hardwork
 plugin. On install, the Postgres + Qdrant + Valkey stack is provisioned
-automatically (~2GB RAM, Docker required). Zero manual setup. If you want
-zero-infra, see the Lite edition."* That positioning is the commercial
-differentiator vs. memory-core / memory-lancedb (file-based, simple).
+automatically (~2GB RAM, Docker required). Zero manual setup."* That
+positioning is the commercial differentiator vs. memory-core /
+memory-lancedb (file-based, simple).
 
 ## 4. NON-NEGOTIABLE RULES (HANDOFF §6)
 
@@ -231,9 +232,11 @@ differentiator vs. memory-core / memory-lancedb (file-based, simple).
    before using any `register*`/`api.on`. Memories are NOT authoritative.
 5. **NO reuse of `celiums-claw`** (archived fork — already deleted from disk).
 6. **NO IPs / hostnames / secrets / API keys** in tracked files or commit msgs.
-7. **Lite is NOT degraded** — identical ethics/journal/PAD/retrieval as Hard;
-   only storage differs (embedded pglite vs PG-triple).
-8. ES prose / EN technical mix is fine in docs & comments.
+7. **No degraded fork.** Mario, 2026-05-21: the Lite edition was cancelled
+   to keep one canonical implementation. There is no "lite" path — engine,
+   ethics, journal, PAD, retrieval, and storage all live in the single
+   Hard package.
+8. EN-only across the public repo (engine vendored exempted).
 9. Journal discipline per §0 above.
 
 ## 5. PHASE STATUS
@@ -258,10 +261,11 @@ differentiator vs. memory-core / memory-lancedb (file-based, simple).
       `openclaw plugins install --link --dangerously-force-unsafe-install`
       (legitimate break-glass per docs/cli/security.md) +
       `systemctl --user enable --now openclaw-gateway`.
-- [ ] Fase 4 — plugin Lite (pglite-embedded adapter; unblocked)
-- [ ] Fase 5 — READMEs + docs + examples
-- [ ] Fase 6 — CI + release prep (ClawHub dry-run, re-verify compat)
-- [ ] Fase 7 — publish (GATED by Mario)
+- [x] Fase 4 — DROPPED (Mario, 2026-05-21). No Lite edition: keep one
+      canonical Hard implementation.
+- [x] Fase 5 — READMEs + docs + examples (commit `fdef082..7806e2e`).
+- [ ] Fase 6 — CI + release prep (ClawHub dry-run, re-verify compat).
+- [ ] Fase 7 — publish (GATED by Mario).
 
 Day-1 target = Fases 0–2. Hard E2E = Day 2.
 

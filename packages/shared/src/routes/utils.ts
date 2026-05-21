@@ -150,7 +150,7 @@ export interface UiRouterContext {
   plugin: {
     id: string;
     version: string;
-    edition: "hard" | "lite";
+    edition: "hard";
   };
   seedState?: {
     version: string;

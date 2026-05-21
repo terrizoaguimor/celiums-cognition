@@ -97,7 +97,7 @@ export async function composeHeartbeatSnapshot(
     );
     memoryCount = Number(r.rows[0]?.n ?? 0);
   } catch {
-    // memories table on pglite may be empty.
+    // memories table missing — degrade silently.
   }
   try {
     const r = await pool.query(

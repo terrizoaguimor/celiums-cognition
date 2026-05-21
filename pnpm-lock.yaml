@@ -169,12 +169,6 @@ importers:
         specifier: ^12.10.0
         version: 12.10.0
 
-  packages/lite:
-    dependencies:
-      '@celiumsai/cognition-shared':
-        specifier: workspace:*
-        version: link:../shared
-
   packages/memory-types:
     devDependencies:
       tsup:

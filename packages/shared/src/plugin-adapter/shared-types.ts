@@ -15,7 +15,7 @@
 /** Minimal pool surface: parameterized query returning typed rows.
  *  The generic defaults to `Record<string, unknown>` so callers that
  *  do not annotate row shape still work. `rowCount` is optional —
- *  pglite returns it, pg.Pool returns it, our internal shims may not. */
+ *  pg.Pool returns it, internal shims may not. */
 export interface PoolLike {
   query: <T = Record<string, unknown>>(
     sql: string,

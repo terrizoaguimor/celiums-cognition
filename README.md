@@ -40,22 +40,6 @@ for the 40 principles that shape the implementation.
 
 ---
 
-## Two editions, one engine
-
-| | `@celiumsai/cognition` (Hard) | `@celiumsai/cognition-lite` (Lite) |
-|---|---|---|
-| Storage | PostgreSQL 17 + pgvector + Qdrant + Valkey | pglite + pgvector (embedded WASM) |
-| External infra | Docker (auto-provisioned) | None |
-| Embeddings | BGE-large-en-v1.5 via TEI (configurable) | ONNX via `@xenova/transformers` |
-| Memory ceiling | Production (~10M memories per host) | Personal (~100k memories per host) |
-| Engine (ethics, journal, PAD, retrieval, lineage) | identical | identical |
-
-Lite is **not** a feature-reduced edition — same engine, embedded
-storage. Pick Hard for a dedicated VPS / on-prem operator dashboard;
-pick Lite when you want a single npm install with zero infra.
-
----
-
 ## Quickstart
 
 ```bash
@@ -113,8 +97,7 @@ declared in `packages/shared/src/config-schema/index.ts`.
 ```
 packages/engine   @celiumsai/cognition-engine  (private — vendored Celiums Memory v2.0)
 packages/shared   @celiumsai/cognition-shared  (private — plugin adapter + HTTP routes)
-packages/hard     @celiumsai/cognition         (publishable — Hard edition)
-packages/lite     @celiumsai/cognition-lite    (publishable — Lite edition)
+packages/hard     @celiumsai/cognition         (publishable)
 ```
 
 The `shared` adapter is partitioned by domain after the A1 split:

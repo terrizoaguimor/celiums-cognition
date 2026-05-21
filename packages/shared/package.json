@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Shared OpenClaw plugin adapter for Celiums Cognition — definePluginEntry wiring, config schema, tool curator (NOT published; used by hard + lite)",
+  "description": "Shared OpenClaw plugin adapter for Celiums Cognition — definePluginEntry wiring, config schema, tool curator (NOT published; consumed by the hard edition)",
   "license": "Apache-2.0",
   "author": "Celiums Solutions LLC",
   "main": "./dist/index.js",
@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "echo '(no shared tests yet — covered by hard/lite E2E smoke)'",
+    "test": "echo '(no shared tests yet — covered by hard E2E smoke)'",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

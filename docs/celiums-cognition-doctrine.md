@@ -189,9 +189,9 @@ phase challenges a principle.
   forgotten; user-facing prompt only after critical gates pass. Fast
   paths cortocircuitan before the full tree loads.
 - **I2 — Dynamic imports are dead-code elimination.** Anything gated
-  by an edition or feature flag is `void import()`'d so the bundler
-  can prune. Lite edition must not pay for Hard edition's Docker stack
-  in its bundle, even as dead code.
+  by a feature flag is `void import()`'d so the bundler can prune.
+  Feature-flagged code paths must not bloat the published artifact
+  even as dead code.
 - **I3 — Migrations are idempotent and tracked.** Each migration is
   a function with one-shot guards; the runner persists `(version,
   sha256, applied_at)` and refuses to proceed on file-content drift.

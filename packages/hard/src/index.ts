@@ -29,7 +29,7 @@ function databaseUrlFromCredentialsFile(): string | null {
     const txt = readFileSync(CREDS_FILE, "utf8");
     const get = (k: string): string | null => {
       const m = new RegExp(`^${k}=(.*)$`, "m").exec(txt);
-      return m ? m[1].trim() : null;
+      return m?.[1]?.trim() ?? null;
     };
     const user = get("POSTGRES_USER") ?? "celiums";
     const password = get("POSTGRES_PASSWORD");

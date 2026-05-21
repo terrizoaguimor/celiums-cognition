@@ -124,9 +124,9 @@ export function wireService(ctx: PluginContext): void {
     id: edition.id,
     start: async () => {
       if (!edition.bootstrap) {
-        // No infra bootstrap (Lite with pglite, remote DB). Migrations
-        // + seed handled by the edition another way; gate still opens
-        // so DB-writing hooks can fire on first request.
+        // No infra bootstrap (remote DB or operator-managed stack).
+        // Migrations + seed handled out of band; gate still opens so
+        // DB-writing hooks can fire on first request.
         setReady(true);
         api.logger.info(`${edition.id}: ready (engine init is lazy, readiness gate open)`);
         return;

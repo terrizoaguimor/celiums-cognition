@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Celiums Cognition — persistent emotional memory plugin for OpenClaw (Hard + Lite)",
+  "description": "Celiums Cognition — persistent emotional memory plugin for OpenClaw",
   "license": "Apache-2.0",
   "author": "Celiums Solutions LLC",
   "homepage": "https://github.com/celiumssolutions/celiums-cognition",

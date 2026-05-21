@@ -5,12 +5,11 @@
 
 // HTTP routes (observability UI backend) + static SPA mount.
 //
-// When the edition opts in (Hard: yes, Lite: not yet), register a
-// prefix route under /api/celiums-cognition/* that the SPA frontend
-// consumes. The handler resolves its dependencies (pg pool, engine
-// config, TEI url, plugin metadata) lazily on first request — we
-// can't access them at register() time because the engine is
-// lazy-init.
+// When the edition opts in, register a prefix route under
+// /api/celiums-cognition/* that the SPA frontend consumes. The
+// handler resolves its dependencies (pg pool, engine config, TEI
+// url, plugin metadata) lazily on first request — we can't access
+// them at register() time because the engine is lazy-init.
 
 import { makeUiRouter, type UiRouterContext } from "../../ui-routes.js";
 import { makeUiStaticHandler } from "../../ui-static.js";
@@ -28,7 +27,7 @@ export function wireHttpRoutes(ctx: PluginContext): void {
     const pool = extractEnginePool(engine);
     if (!pool) {
       throw new Error(
-        "UI routes require a Postgres pool — engine running in in-memory or sqlite mode",
+        "UI routes require a Postgres pool — engine running without one",
       );
     }
     const ec = edition.resolveEngineConfig(cfg, api) as {
@@ -45,7 +44,7 @@ export function wireHttpRoutes(ctx: PluginContext): void {
       plugin: {
         id: edition.id,
         version: edition.pluginVersion ?? "0.0.0",
-        edition: (edition.id.endsWith("-lite") ? "lite" : "hard") as "hard" | "lite",
+        edition: "hard",
       },
       installedAt: process.env.CELIUMS_PLUGIN_INSTALLED_AT,
       agentId: cfg.agentId,

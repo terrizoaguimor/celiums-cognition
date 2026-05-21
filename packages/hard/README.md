@@ -1,6 +1,6 @@
-# @celiumsai/cognition (Hard)
+# @celiumsai/cognition
 
-Persistent emotional memory for OpenClaw — **Hard edition**.
+Persistent emotional memory for OpenClaw.
 
 Full production stack: PostgreSQL 17 + pgvector, Qdrant, and Valkey
 provisioned **automatically** via Docker compose. BGE-M3 embeddings by
@@ -50,12 +50,5 @@ node node_modules/@celiumsai/cognition/dist/setup.js
 
 This is the same code path the gateway runs internally; it is
 idempotent.
-
-## Editions
-
-Same engine as [`@celiumsai/cognition-lite`](../lite) — only the
-storage backend differs. Hard targets production hosts (single-tenant
-operator dashboards, dedicated VPS, on-prem). Lite uses embedded
-pglite + WASM and ships with zero infra requirements.
 
 Apache-2.0 © Celiums Solutions LLC.

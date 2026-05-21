@@ -3,8 +3,8 @@
  * Licensed under the Apache License, Version 2.0
  */
 
-// @celiumsai/cognition-shared — public surface used by the Hard and Lite
-// editions to stand up the OpenClaw plugin.
+// @celiumsai/cognition-shared — public surface used by @celiumsai/cognition
+// to stand up the OpenClaw plugin.
 
 export { createCognitionPlugin, type EditionOptions } from "./plugin-adapter/index.js";
 export {

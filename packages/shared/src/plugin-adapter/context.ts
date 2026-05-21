@@ -77,9 +77,9 @@ export interface PluginContext {
   /** Memoized module store (knowledge corpus). Returns null when the
    *  store cannot be built (config missing, schema mismatch). */
   getModuleStore(): ModuleStore | null;
-  /** Reach into the engine's internal pg.Pool. Returns undefined on
-   *  pglite / in-memory builds. Attaches a one-time 'error' listener
-   *  so a connection-level fault doesn't crash the gateway. */
+  /** Reach into the engine's internal pg.Pool. Returns undefined when
+   *  the engine is built without one. Attaches a one-time 'error'
+   *  listener so a connection-level fault doesn't crash the gateway. */
   extractEnginePool(engine: MemoryEngineWithStore): PoolLike | undefined;
 
   // ── readiness gate (audit P0 #4) ──
