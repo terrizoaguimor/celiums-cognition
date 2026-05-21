@@ -6,7 +6,7 @@ import React, { useState, useEffect } from "react";
 import {
   fetchHealth, fetchCounts, fetchPillars,
   fetchSparklines, fetchRecent, fetchVersionCheck,
-  fetchLimbicState,
+  fetchLimbicState, fetchOperatorStatus,
   pillarMeta, useQuery,
 } from "./data.js";
 import {
@@ -73,9 +73,17 @@ export function Overview() {
         }
       />
 
-      {/* Agent state — PAD + circadian (live every mount) */}
+      {/* Agent state — PAD + circadian (live every 15s) */}
       <div style={{ marginBottom: 18 }}>
         <AgentStateCard />
+      </div>
+
+      {/* Cognition status — the four U5 metrics surfaced by Fase D's
+       *  /operator-status endpoint. Drives the gateway's control-UI
+       *  widget too (registerControlUiDescriptor). Polls every 15s
+       *  so journal_head stays current as the agent writes. */}
+      <div style={{ marginBottom: 18 }}>
+        <CognitionStatusCard />
       </div>
 
       {/* Stack health */}
@@ -333,6 +341,110 @@ export function AgentStateCard() {
                 </div>
               ) : (
                 <div style={{ fontSize: 12, color: "var(--c-fg-subtle)" }}>— no rhythm computed</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </SectionCard>
+  );
+}
+
+/* Cognition status card — the four U5 metrics from /operator-status:
+ * context usage, journal head hash, ethics mode, recall count for last
+ * turn. Mirrors the gateway's control-UI widget so the operator sees the
+ * same numbers in two places (shell chip + dashboard card). Polls every
+ * 15s like AgentStateCard so journal_head stays current.
+ */
+export function CognitionStatusCard() {
+  const statusQ = useQuery(fetchOperatorStatus, []);
+  const { refetch } = statusQ;
+  useEffect(() => {
+    const id = setInterval(() => refetch(), 15_000);
+    return () => clearInterval(id);
+  }, [refetch]);
+  const data = statusQ.data;
+  const ctxPct = data?.context_usage_pct;
+  const journalHead = data?.journal_head;
+  const ethicsMode = data?.ethics_mode ?? "—";
+  const recallCount = data?.recall_count_last_turn;
+
+  const modeTone =
+    ethicsMode === "enforce" ? "amber" :
+    ethicsMode === "off"     ? "red"   :
+    ethicsMode === "radar"   ? "green" : "";
+
+  return (
+    <SectionCard
+      title="Cognition status"
+      count={journalHead ? `chain @ ${journalHead.hash.slice(0, 8)}…` : "—"}
+      action={
+        <HelpPopover title="What this shows">
+          <p style={{ margin: "0 0 8px" }}>
+            The four operator-side metrics Fase D's <code>registerControlUiDescriptor</code>
+            exposes to the OpenClaw shell. Identical values to what the
+            agent reports via <code>celiums.status</code> session action.
+          </p>
+          <ul style={{ margin: "8px 0", paddingLeft: 18, lineHeight: 1.55 }}>
+            <li><strong>Context %</strong>: how full the LLM context window is.
+              <code> null</code> until the host SDK exposes the signal.</li>
+            <li><strong>Journal head</strong>: most recent hash on this agent's
+              SHA-chained journal. The continuity anchor — if it changes,
+              the agent wrote something new.</li>
+            <li><strong>Ethics mode</strong>: <code>off</code> (gate disabled),
+              <code> radar</code> (eval + log), <code>enforce</code>
+              (strictMode blocks any violation).</li>
+            <li><strong>Recall count</strong>: memories pulled into the last
+              turn's context. <code>null</code> until the SDK reports it.</li>
+          </ul>
+        </HelpPopover>
+      }>
+      <div style={{ padding: "14px 18px" }}>
+        {statusQ.loading && !data && <SkeletonRows n={2} />}
+        {data && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+            {/* Left column: ethics + context */}
+            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", rowGap: 10, columnGap: 12, fontSize: 13 }}>
+              <div style={{ color: "var(--c-fg-muted)" }}>ethics mode</div>
+              <div>
+                <span className={`celiums-chip ${modeTone}`} style={{ fontFamily: "var(--font-mono)" }}>
+                  {ethicsMode}
+                </span>
+              </div>
+              <div style={{ color: "var(--c-fg-muted)" }}>context %</div>
+              <div style={{ color: ctxPct == null ? "var(--c-fg-faint)" : "var(--c-fg)", fontFamily: "var(--font-mono)" }}>
+                {ctxPct == null ? "— (sdk-pending)" : `${(ctxPct * 100).toFixed(1)}%`}
+              </div>
+              <div style={{ color: "var(--c-fg-muted)" }}>recall · last turn</div>
+              <div style={{ color: recallCount == null ? "var(--c-fg-faint)" : "var(--c-fg)", fontFamily: "var(--font-mono)" }}>
+                {recallCount == null ? "— (sdk-pending)" : recallCount}
+              </div>
+            </div>
+            {/* Right column: journal head */}
+            <div>
+              <div style={{ fontSize: 11, color: "var(--c-fg-subtle)", textTransform: "uppercase",
+                            letterSpacing: 0.4, marginBottom: 8, fontFamily: "var(--font-mono)" }}>
+                Journal head
+              </div>
+              {journalHead ? (
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", rowGap: 8, columnGap: 12, fontSize: 12.5 }}>
+                  <div style={{ color: "var(--c-fg-muted)" }}>id</div>
+                  <div style={{ color: "var(--c-fg)", fontFamily: "var(--font-mono)" }}>
+                    {String(journalHead.id).slice(0, 12)}…
+                  </div>
+                  <div style={{ color: "var(--c-fg-muted)" }}>hash</div>
+                  <div style={{ color: "var(--c-fg)", fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>
+                    {String(journalHead.hash).slice(0, 24)}…
+                  </div>
+                  <div style={{ color: "var(--c-fg-muted)" }}>written</div>
+                  <div style={{ color: "var(--c-fg)", fontFamily: "var(--font-mono)" }}>
+                    {fmtRelative(journalHead.written_at)}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "var(--c-fg-subtle)" }}>
+                  — no journal entries yet for this agent
+                </div>
               )}
             </div>
           </div>

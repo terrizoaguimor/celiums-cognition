@@ -77,6 +77,7 @@ export const fetchEthicsEvents = (params) => apiFetch(`/ethics/events${qs(params
 export const fetchSparklines   = ()       => apiFetch("/activity/sparklines");
 export const fetchRecent       = (params) => apiFetch(`/activity/recent${qs(params)}`);
 export const fetchLimbicState  = ()       => apiFetch("/limbic-state");
+export const fetchOperatorStatus = ()     => apiFetch("/operator-status");
 export const fetchTimezones    = ()       => apiFetch("/timezones");
 export const fetchSettingsTimezone = ()   => apiFetch("/settings/timezone");
 export const saveSettingsTimezone  = (iana) => apiFetch("/settings/timezone", { method: "PUT", body: { iana } });
