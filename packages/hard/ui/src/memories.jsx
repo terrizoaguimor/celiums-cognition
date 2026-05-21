@@ -212,8 +212,9 @@ export function MemoryRow({ m, selected, onClick }) {
 }
 
 /* Date helpers — show the user the WEEKDAY + DAY + TIME so they can ask
- * "qué pasó X día" and visually scan back. Falls back to relative time
- * for the past-hour bucket where absolute dates clutter without helping. */
+ * "what happened on day X" and visually scan back. Falls back to
+ * relative time for the past-hour bucket where absolute dates clutter
+ * without helping. */
 export function fmtDateShort(iso) {
   if (!iso) return "—";
   try {

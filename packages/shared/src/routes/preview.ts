@@ -45,7 +45,7 @@ async function previewPromptImpl(
   res: ServerResponse,
 ): Promise<void> {
   const q = parseQuery(req);
-  const msg = q.get("msg")?.trim() || "qué hablamos ayer?";
+  const msg = q.get("msg")?.trim() || "what did we talk about yesterday?";
   const toolsMode = q.get("tools") === "all" ? "all" : "curated";
 
   const toolSet =

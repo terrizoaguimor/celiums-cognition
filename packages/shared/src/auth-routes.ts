@@ -438,8 +438,8 @@ async function authMe(
     // To an unauthenticated caller we expose ONLY whether signup is
     // still possible (zero accounts in the DB) — never whether an
     // account already exists. This is single-tenant on purpose
-    // (Mario 2026-05-21: "si ya está creado el usuario no debería de
-    // poderse crear más usuarios"), and leaking `account_exists`
+    // (Mario 2026-05-21: once the operator account is created, no
+    // additional signups are permitted), and leaking `account_exists`
     // tells an attacker the system is in use and worth targeting.
     const acct = await getAccount(ctx);
     sendJson(res, 200, {

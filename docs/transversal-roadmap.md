@@ -1,103 +1,103 @@
-# Roadmap transversal — Celiums Cognition × OpenClaw SDK
+# Transversal roadmap — Celiums Cognition × OpenClaw SDK
 
-> **Status (2026-05-21): ALL SIX PHASES SHIPPED + VERIFIED IN PRODUCTION.**
-> A→F closed between 2026-05-20 and 2026-05-21. See `CLAUDE.md §5.1`
-> for commit map. This document is preserved as the design rationale
-> behind each Fase; the active project authority is now
-> `docs/celiums-cognition-doctrine.md`.
+> **Status (2026-05-21): ALL SIX PHASES SHIPPED + VERIFIED IN
+> PRODUCTION.** A→F closed between 2026-05-20 and 2026-05-21. See
+> `CLAUDE.md §5.1` for the commit map. This document is preserved as
+> the design rationale behind each Phase; the active project
+> authority is now `docs/celiums-cognition-doctrine.md`.
 
-**Tema (original):** El plugin vivía en su propia isla (tools + UI +
-auth). El SDK de OpenClaw expone ~50 seams que permiten a Cognition
-hilarse en cada paso del ciclo de vida del gateway. Este documento
-inventarió los seams disponibles, comparó contra lo que ya se usaba, y
-propuso el plan de adopción priorizado que después se ejecutó.
+**Theme (original):** The plugin used to live on its own island
+(tools + UI + auth). The OpenClaw SDK exposes ~50 seams that let
+Cognition thread itself into every step of the gateway's lifecycle.
+This document inventoried the available seams, compared them against
+what the plugin already used, and proposed the prioritized adoption
+plan that was subsequently executed.
 
-Verificado contra `/Volumes/My Book/Documents/openclaw-study` (OpenClaw
+Verified against `/Volumes/My Book/Documents/openclaw-study` (OpenClaw
 2026.5.18+), commit `78d226bb`.
 
 ---
 
-## Lo que ya usamos (8 seams)
+## Seams already in use at design time (8)
 
-| Seam | Para qué | Estado |
+| Seam | Purpose | Status |
 |---|---|---|
-| `registerTool` | 61 herramientas MCP (curated 8 + all) | sólido |
-| `registerHttpRoute` | UI SPA + REST API `/api/celiums-cognition/*` | sólido |
-| `registerCli` | comando `openclaw celiums-cognition status` | mínimo |
-| `registerService` | bootstrap stack + migrations + seed | sólido |
-| `registerMemoryPromptSupplement` | system-prompt teaching (Tanda Mario 2026-05-21) | sólido |
-| `api.on("before_prompt_build")` | `turnContext` + identity preamble | sólido |
-| `api.on("agent_end")` × 2 | auto-capture + auto-journal | sólido |
-| `api.on("before_agent_run")` + `before_tool_call` | ethics gate | sólido |
+| `registerTool` | 61 MCP tools (curated 8 + all) | solid |
+| `registerHttpRoute` | UI SPA + REST API `/api/celiums-cognition/*` | solid |
+| `registerCli` | `openclaw celiums-cognition status` command | minimal |
+| `registerService` | bootstrap stack + migrations + seed | solid |
+| `registerMemoryPromptSupplement` | system-prompt teaching (Mario, 2026-05-21) | solid |
+| `api.on("before_prompt_build")` | `turnContext` + identity preamble | solid |
+| `api.on("agent_end")` × 2 | auto-capture + auto-journal | solid |
+| `api.on("before_agent_run")` + `before_tool_call` | ethics gate | solid |
 
-**Diagnóstico:** el plugin observa el ciclo de vida del agente Y le
-inyecta memoria, pero no participa en otras capas — continuity,
-subagent lifecycle, channel mensajería, session boundaries, audit
-global, autonomous heartbeats — todas pasan sin que Cognition vea
-nada.
+**Diagnosis:** the plugin observed the agent's lifecycle AND injected
+memory into it, but did not participate in the other layers —
+continuity, subagent lifecycle, channel messaging, session
+boundaries, global audit, autonomous heartbeats — all flowed past
+Cognition without it seeing anything.
 
 ---
 
-## Oportunidades transversales — priorizadas
+## Transversal opportunities — prioritized
 
-### 🔴 Fase A — Continuidad sobre límite de contexto
+### 🔴 Phase A — Continuity across context limit
 
-**Pieza:** `registerCompactionProvider` + `api.on("before_compaction")`
+**Piece:** `registerCompactionProvider` + `api.on("before_compaction")`
 + `api.on("after_compaction")`.
 
-**Qué pasa hoy:** cuando el contexto del LLM llega al límite, OpenClaw
-compacta (resume + descarta historia vieja). Nuestro plugin NO ve esto.
-Lo que tu agente "olvidó" durante la compactación se pierde a menos
-que coincidencialmente alguien hubiera llamado `remember()` justo
-antes.
+**What happens today:** when the LLM context hits its limit, OpenClaw
+compacts (summarize + drop older history). The plugin did NOT see this.
+Whatever the agent "forgot" during compaction was lost unless someone
+happened to call `remember()` just before.
 
-**Qué proponemos:**
+**Proposal:**
 
-1. Implementar un `CompactionProvider` con id `celiums-cognition`. La
-   firma es:
+1. Implement a `CompactionProvider` with id `celiums-cognition`. The
+   signature is:
    ```ts
    summarize({ messages, compressionRatio, previousSummary }) => Promise<string>
    ```
-   Nuestro provider podría usar `journal_arc` (que el engine ya tiene
-   — synthesis narrativa con embeddings) y devolver un summary
-   conciso. NO es slot exclusivo (verificado: el registry mapea por
-   `id`, soporta varios providers).
+   Our provider can use `journal_arc` (which the engine already
+   ships — narrative synthesis with embeddings) and return a concise
+   summary. NOT an exclusive slot (verified: the registry keys by
+   `id`, supports multiple providers).
 
-2. **Antes de compactar**, hook `before_compaction`:
-   - Dump del state limbic + circadian al journal (entry tipo
-     `arc`, tags `["pre-compaction"]`)
-   - Extraer los facts más importantes del contexto y persistirlos
-     como memorias (importance ≥ 0.7) si aún no están
+2. **Before compacting**, hook `before_compaction`:
+   - Dump limbic + circadian state to the journal (entry type `arc`,
+     tags `["pre-compaction"]`).
+   - Extract the most important facts from context and persist them
+     as memories (importance ≥ 0.7) if not already saved.
 
-3. **Después de compactar**, hook `after_compaction`:
-   - Escribir un journal entry tipo `reflection` con el resumen +
-     el delta de qué se perdió
-   - Próximo `turnContext` puede leer ese resumen como prior
+3. **After compacting**, hook `after_compaction`:
+   - Write a `reflection` entry with the summary + the delta of what
+     was lost.
+   - The next `turnContext` can read that summary as a prior.
 
-**Resultado:** el plugin se vuelve el **motor de continuity del
-gateway**. Un agente nunca "pierde" información significativa al
-compactar — la memoria persistente la captura ANTES de la pérdida.
+**Result:** the plugin becomes the **gateway's continuity engine**.
+An agent never "loses" significant information when compacting —
+persistent memory captures it BEFORE the loss.
 
-**Costo:** ~300 líneas. Riesgo: medio (toca path crítico, hay que
-testear que el provider no rompe agentes que ya usan memory-core).
+**Cost:** ~300 lines. Risk: medium (critical path; must verify the
+provider doesn't break agents already on memory-core).
 
 ---
 
-### 🔴 Fase B — Agentes y subagentes
+### 🔴 Phase B — Agents and subagents
 
-**Pieza:** hooks `subagent_spawning`, `subagent_spawned`, `subagent_ended`.
+**Piece:** hooks `subagent_spawning`, `subagent_spawned`, `subagent_ended`.
 
-**Qué pasa hoy:** cuando OpenClaw spawnea un subagent (para una tarea
-narrow), el subagent llega sin saber NADA de lo que el parent agent
-estaba pensando. Sus journal entries quedan aisladas en su propio
-`agent_id`. Cuando termina, su trabajo se pierde a menos que el parent
-lo capture manualmente.
+**What happens today:** when OpenClaw spawns a subagent (for a narrow
+task), the subagent arrives knowing NOTHING about what the parent
+agent was thinking. Its journal entries are isolated in its own
+`agent_id`. When it ends, its work is lost unless the parent captures
+it manually.
 
-Verifiqué el payload del SDK:
+Verified SDK payload:
 ```ts
 PluginHookSubagentSpawnBase = {
   childSessionKey: string;
-  agentId: string;       // el nombre del subagent
+  agentId: string;       // the subagent's id
   label?: string;
   mode: "run" | "session";
   requester?: { channel, accountId, to, threadId };
@@ -105,224 +105,223 @@ PluginHookSubagentSpawnBase = {
 }
 ```
 
-**Qué proponemos:**
+**Proposal:**
 
-1. **`subagent_spawning`** (antes de que el child arranque):
-   - Emitir journal entry en el chain del parent: tipo `decision`,
-     tags `["spawned-subagent"]`, content `"Spawning subagent <X>
-     for task <Y>"`. `conversation_id` compartido entre parent y child.
-   - Pre-cargar las últimas N entries del journal del parent como
-     **identity preamble adicional** para el child — el child ve "Yo
-     soy subagent <X> al servicio de <Y>; el agente parent recientemente
-     decidió Z, dudó sobre W..."
+1. **`subagent_spawning`** (before the child boots):
+   - Emit a journal entry on the parent's chain: type `decision`,
+     tags `["spawned-subagent"]`, content `"Spawning subagent <X> for
+     task <Y>"`. `conversation_id` is shared between parent and child.
+   - Pre-load the parent's most recent N journal entries as an
+     additional **identity preamble** for the child — the child sees
+     "I am subagent <X> at the service of <Y>; the parent agent
+     recently decided Z, doubted W..."
 
-2. **`subagent_spawned`** (child está listo):
-   - Vincular `child_agent_id ↔ parent_agent_id` en una tabla
-     `agent_lineage(parent, child, spawned_at, task_label)`. Eso
-     habilita auditorías como "todos los subagents de main durante
-     mayo".
+2. **`subagent_spawned`** (child is live):
+   - Link `child_agent_id ↔ parent_agent_id` in an `agent_lineage
+     (parent, child, spawned_at, task_label)` table. This enables
+     audits like "all of main's subagents during May".
 
-3. **`subagent_ended`** (child termina):
-   - El child cierra su propio journal (tipo `arc`, summary del trabajo)
-   - El parent recibe un nuevo journal entry: `lesson` o `reflection`
-     según éxito, con tags `["from-subagent:<X>"]`, contenido = resumen
-     del child + verdict
-   - El trabajo del child que importa para el operator se persiste
-     como memorias (auto-capture filtrado por importance del child)
+3. **`subagent_ended`** (child finishes):
+   - The child closes its own journal (type `arc`, work summary).
+   - The parent receives a new journal entry: `lesson` or
+     `reflection` depending on success, with tags
+     `["from-subagent:<X>"]`, content = child summary + verdict.
+   - Child work that matters to the operator is persisted as memories
+     (auto-capture filtered by importance from the child).
 
-**Resultado:** la flota de agentes tiene **memoria compartida + voces
-separadas + lineage trazable**. Vos abrís el Journal tab → filtras por
-`main` → ves "spawned 3 subagents during this session" + click para
-ir al chain de cada uno.
+**Result:** the agent fleet has **shared memory + separate voices +
+traceable lineage**. Open the Journal tab → filter by `main` → see
+"spawned 3 subagents during this session" + click to walk each chain.
 
-**Costo:** ~400 líneas + 1 migración (tabla `agent_lineage`).
+**Cost:** ~400 lines + 1 migration (`agent_lineage` table).
 
 ---
 
-### 🟡 Fase C — Session lifecycle
+### 🟡 Phase C — Session lifecycle
 
-**Pieza:** `api.on("session_start")` + `api.on("session_end")`.
+**Piece:** `api.on("session_start")` + `api.on("session_end")`.
 
-**Qué pasa hoy:** no detectamos cuándo arranca una conversación nueva
-ni cuándo termina. El `conversation_id` que pasamos al journal viene
-del `sessionId` del SDK, que está OK, pero no marcamos los boundaries
-explícitamente en el journal.
+**What happens today:** the plugin does not detect when a new
+conversation opens or when one closes. The `conversation_id` passed
+to the journal comes from the SDK's `sessionId`, which is fine, but
+boundaries are not marked explicitly in the journal.
 
-**Qué proponemos:**
+**Proposal:**
 
-1. `session_start` → journal entry tipo `reflection`, tags
+1. `session_start` → journal entry type `reflection`, tags
    `["session-start"]`, content `"New session opened via channel <X>
-   from <accountId>"`. Esto sirve de **ancla** cuando el operador
-   pagina semanas hacia atrás.
+   from <accountId>"`. This acts as an **anchor** when the operator
+   pages weeks back.
 
 2. `session_end` → journal entry `arc`, tags `["session-end"]`,
-   content = mini-resumen de los temas vistos (puede llamar
-   `journal_arc(query=this_session_id)` internamente).
+   content = mini-summary of the topics covered (may call
+   `journal_arc(query=this_session_id)` internally).
 
-**Resultado:** el Journal tab puede mostrar "sesiones" como agrupación
-natural, no solo flujo continuo.
+**Result:** the Journal tab can render "sessions" as a natural
+grouping, not just continuous flow.
 
-**Costo:** ~80 líneas.
-
----
-
-### 🟡 Fase D — Operator UX en el shell nativo
-
-**Pieza:** `registerSessionAction` + `registerControlUiDescriptor`.
-
-**Qué pasa hoy:** para grabar una memoria o ver el limbic state, el
-operador tiene que abrir el dashboard (otra pestaña). En la conversación
-con el agente no hay forma de hacerlo inline.
-
-**Qué proponemos:**
-
-1. `registerSessionAction`: declara acciones que el operator puede
-   invocar como slash-commands o botones del shell:
-   - `/celiums-remember <text>` → llama `remember()` con importancia
-     alta sin abrir el dashboard
-   - `/celiums-recall <query>` → muestra top 5 inline
-   - `/celiums-limbic` → muestra el current PAD + circadian inline
-   - `/celiums-compact` → fuerza una compaction pass
-
-2. `registerControlUiDescriptor`: declara un widget para el panel
-   nativo de OpenClaw que muestra el limbic state + last journal entry
-   + memory count, siempre visible en el shell. Datos via los endpoints
-   `/api/celiums-cognition/limbic-state` que ya tenemos.
-
-**Resultado:** Cognition deja de ser "el otro tab" y se vuelve parte
-del shell.
-
-**Costo:** ~250 líneas.
+**Cost:** ~80 lines.
 
 ---
 
-### 🟡 Fase E — Tooling extras
+### 🟡 Phase D — Operator UX in the native shell
 
-**Pieza:** `registerToolMetadata` + `registerSecurityAuditCollector` +
+**Piece:** `registerSessionAction` + `registerControlUiDescriptor`.
+
+**What happens today:** to record a memory or check limbic state, the
+operator has to open the dashboard (another tab). In the conversation
+with the agent there is no inline way to do it.
+
+**Proposal:**
+
+1. `registerSessionAction`: declares actions the operator can invoke
+   as slash commands or shell buttons:
+   - `/celiums-remember <text>` → calls `remember()` with high
+     importance without opening the dashboard.
+   - `/celiums-recall <query>` → shows the top 5 inline.
+   - `/celiums-limbic` → shows the current PAD + circadian inline.
+   - `/celiums-compact` → forces a compaction pass.
+
+2. `registerControlUiDescriptor`: declares a widget for OpenClaw's
+   native panel showing limbic state + last journal entry + memory
+   count, always visible in the shell. Data via the
+   `/api/celiums-cognition/limbic-state` endpoints we already have.
+
+**Result:** Cognition stops being "the other tab" and becomes part
+of the shell.
+
+**Cost:** ~250 lines.
+
+---
+
+### 🟡 Phase E — Tooling extras
+
+**Piece:** `registerToolMetadata` + `registerSecurityAuditCollector` +
 `registerNodeInvokePolicy`.
 
-**Qué proponemos:**
+**Proposal:**
 
-1. `registerToolMetadata` — taggear nuestros 61 tools en grupos
-   (`memory`, `journal`, `ethics`, `cognitive`, `atlas`,
-   `research`, `write`). El shell del operator puede agruparlos
-   visualmente; el agente puede filtrar por categoría al llamar.
+1. `registerToolMetadata` — tag our 61 tools into groups (`memory`,
+   `journal`, `ethics`, `cognitive`, `atlas`, `research`, `write`).
+   The operator shell can group them visually; the agent can filter
+   by category when calling.
 
-2. `registerSecurityAuditCollector` — alimentar el sistema de audit
-   GLOBAL del gateway desde nuestra `ethics_audit` table. Cada
-   `final_decision: block` se replica al log central de OpenClaw para
-   correlacionar con eventos de canales / autenticación / etc.
+2. `registerSecurityAuditCollector` — feed the gateway's GLOBAL audit
+   system from our `ethics_audit` table. Each `final_decision: block`
+   replicates to OpenClaw's central log to correlate with channel /
+   auth events / etc.
 
-3. `registerNodeInvokePolicy` — registrar ethics como un POLICY
-   explícito, no solo un hook. Algunas tools peligrosas pasan por
-   "approval" en OpenClaw; queremos que ese path consulte nuestro
-   ethics pipeline como segunda opinión.
+3. `registerNodeInvokePolicy` — register ethics as an explicit
+   POLICY, not just a hook. Some dangerous tools go through
+   "approval" in OpenClaw; we want that path to consult our ethics
+   pipeline as a second opinion.
 
-**Resultado:** Cognition integra con la infrastructure de gobernanza
-de OpenClaw, no solo la suya.
+**Result:** Cognition integrates with OpenClaw's governance
+infrastructure, not just its own.
 
-**Costo:** ~200 líneas.
+**Cost:** ~200 lines.
 
 ---
 
-### 🟢 Fase F — Autonomous loops + canales
+### 🟢 Phase F — Autonomous loops + channels
 
-**Pieza:** `heartbeat_prompt_contribution` + `tool_result_persist` +
+**Piece:** `heartbeat_prompt_contribution` + `tool_result_persist` +
 `message_received` / `message_sent`.
 
-**Qué proponemos:**
+**Proposal:**
 
-1. `heartbeat_prompt_contribution` — para agents autónomos (cron-like
-   loops), inyectar un mini-`turnContext` adaptado al heartbeat (más
-   corto, solo limbic + 3 memories más relevantes).
+1. `heartbeat_prompt_contribution` — for autonomous agents (cron-like
+   loops), inject a mini-`turnContext` adapted to the heartbeat
+   (shorter, only limbic + 3 most relevant memories).
 
-2. `tool_result_persist` — captura selectiva de tool results como
-   memories. Filtro: `file_read` largos, `web_search` con muchos
-   resultados, `recall_remote` exitosos. Skip: list-dirs, no-op grep.
+2. `tool_result_persist` — selective capture of tool results as
+   memories. Filter in: long `file_read`s, `web_search` with many
+   results, successful `recall_remote`. Skip: list-dirs, no-op greps.
 
-3. `message_received` / `message_sent` — para canales (Telegram,
-   WhatsApp, Discord, Signal). Journal entries con channel metadata.
-   Esto hace que el Journal tab muestre **"main agent · via telegram
-   · 14:32"** en cada entry, no solo timestamps.
+3. `message_received` / `message_sent` — for channels (Telegram,
+   WhatsApp, Discord, Signal). Journal entries with channel metadata.
+   The Journal tab then shows **"main agent · via telegram · 14:32"**
+   on each entry, not just timestamps.
 
-**Resultado:** Cognition observa el gateway completo, no solo
-las invocations directas del agente.
+**Result:** Cognition observes the full gateway, not just direct
+agent invocations.
 
-**Costo:** ~300 líneas.
+**Cost:** ~300 lines.
 
 ---
 
-## Resumen ejecutivo
+## Executive summary
 
-| Fase | Impact | Costo | Pieza clave |
+| Phase | Impact | Cost | Key piece |
 |---|---|---|---|
-| A. Continuity | 🔴 alto | ~300 ln | `registerCompactionProvider` |
-| B. Subagents | 🔴 alto | ~400 ln + 1 migración | `subagent_*` hooks |
-| C. Session lifecycle | 🟡 medio | ~80 ln | `session_start/end` |
-| D. Operator UX | 🟡 medio | ~250 ln | `registerSessionAction` + Control UI |
-| E. Governance | 🟡 medio | ~200 ln | toolMetadata + audit + policy |
-| F. Autonomy + canales | 🟢 bajo | ~300 ln | heartbeat + persist + channel hooks |
+| A. Continuity | 🔴 high | ~300 ln | `registerCompactionProvider` |
+| B. Subagents | 🔴 high | ~400 ln + 1 migration | `subagent_*` hooks |
+| C. Session lifecycle | 🟡 medium | ~80 ln | `session_start/end` |
+| D. Operator UX | 🟡 medium | ~250 ln | `registerSessionAction` + Control UI |
+| E. Governance | 🟡 medium | ~200 ln | toolMetadata + audit + policy |
+| F. Autonomy + channels | 🟢 low | ~300 ln | heartbeat + persist + channel hooks |
 
-**Recomendación de orden:** A → B → C → E → D → F.
+**Recommended order:** A → B → C → E → D → F.
 
-- A primero porque resuelve el problema más grande hoy (memoria que se
-  pierde al compactar).
-- B después porque Mario explícitamente pidió robustez per-agent y eso
-  es donde el plugin se vuelve la columna vertebral de fleets de
-  agentes.
-- C es barato y pone orden al journal (precondición útil para D y F).
-- E es trabajo de infraestructura que el operator no nota
-  inmediatamente pero importa para production trust.
-- D es UX puro — agradable pero no transformacional.
-- F sólo cuando arranquemos a meter canales en serio o autonomy
-  modes.
+- A first because it solves the biggest problem of the day (memory
+  lost on compaction).
+- B next because Mario explicitly asked for per-agent robustness,
+  and that's where the plugin becomes the backbone of agent fleets.
+- C is cheap and brings order to the journal (a useful precondition
+  for D and F).
+- E is infrastructure work the operator doesn't notice immediately
+  but matters for production trust.
+- D is pure UX — pleasant but not transformational.
+- F only when channels or autonomy modes are actually rolled in.
 
 ---
 
-## Lo que no vamos a implementar y por qué
+## What we won't implement, and why
 
-- `registerProvider` / `registerSpeechProvider` / `registerImageGenerationProvider`
-  etc. — somos un plugin de cognición, no un proveedor de modelos.
-- `registerChannel` — somos memoria, no un canal de mensajería.
-- `registerContextEngine` — slot exclusivo; memory-core probablemente
-  lo tiene. Pelear por él no aporta vs. `registerCompactionProvider`
-  que no es exclusivo.
-- `registerTrustedToolPolicy` — bundled-only (CLAUDE.md §2b confirmed).
-  External plugins no pueden registrarlo.
+- `registerProvider` / `registerSpeechProvider` /
+  `registerImageGenerationProvider` etc. — we're a cognition plugin,
+  not a model provider.
+- `registerChannel` — we're memory, not a messaging channel.
+- `registerContextEngine` — exclusive slot; memory-core likely owns
+  it. Fighting for it doesn't beat `registerCompactionProvider`
+  which is not exclusive.
+- `registerTrustedToolPolicy` — bundled-only (CLAUDE.md §2b
+  confirmed). External plugins cannot register it.
 - `registerCodexAppServerExtensionFactory` — bundled-only.
-- `registerAgentHarness` — somos memoria, no un harness.
-- `registerMigrationProvider` — solo aplica a sistemas con migraciones
-  custom; nuestras migrations son SQL puras y el engine las corre.
+- `registerAgentHarness` — we're memory, not a harness.
+- `registerMigrationProvider` — only applies to systems with custom
+  migrations; ours are plain SQL files run by the engine.
 
 ---
 
-## Verificación
+## Verification
 
-- `registerCompactionProvider` shape verificado en
+- `registerCompactionProvider` shape verified in
   `openclaw-study/src/plugins/compaction-provider.ts:CompactionProvider`.
-- Subagent payload verificado en
+- Subagent payload verified in
   `openclaw-study/src/plugins/hook-types.ts:PluginHookSubagentSpawnBase`.
-- Lista de hooks completa en
+- Full hook list in
   `openclaw-study/src/plugins/hook-types.ts:PLUGIN_HOOK_NAMES`.
-- Lista de register* completa en
+- Full `register*` list in
   `openclaw-study/src/plugins/types.ts:2492-2860`.
 
-## Cierre — 2026-05-21
+## Closing — 2026-05-21
 
-Todas las fases A-F shipearon. Mapa de commits:
+All phases A-F shipped. Commit map:
 
-- Fase A — `11cacf1`
-- Fase B — `b56f0f2` (sobre `d492e90`/`f39fb17`/`9babbe4`)
-- Fase B+ — `2ea13a6`
-- Fase C — commit posterior a la doctrina
-- Fase D — `0153015`
-- Fase E — `a2df9e2`
-- Fase F — `6dbaa57`
+- Phase A — `11cacf1`
+- Phase B — `b56f0f2` (over `d492e90`/`f39fb17`/`9babbe4`)
+- Phase B+ — `2ea13a6`
+- Phase C — commit after the doctrine landed
+- Phase D — `0153015`
+- Phase E — `a2df9e2`
+- Phase F — `6dbaa57`
 
-Cada fase pasó por: design → verificación de shapes contra código real
-del SDK → implementación con doctrine citations inline → build + typecheck
-verdes → deploy a prod-openclaw + smoke. El gateway corre 7 plugins
-incluyendo celiums-cognition con todos los seams citados arriba activos.
+Every phase went through: design → shape verification against real
+SDK code → implementation with inline doctrine citations → green
+build + typecheck → deploy to prod-openclaw + smoke. The gateway
+runs 7 plugins including celiums-cognition with every seam cited
+above active.
 
-El próximo trabajo es incremental, no fase-shaped: ports + endpoints
-+ adapters + dashboard widgets que consumen los seams ya wireados.
+Subsequent work is incremental, not phase-shaped: ports + endpoints
++ adapters + dashboard widgets consuming the seams already wired.

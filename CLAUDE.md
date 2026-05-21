@@ -185,10 +185,10 @@ reference; it is external-installable and does NOT use
 
 ## 3b. PRODUCT DIRECTIVE — auto-bootstrap mandatory (Mario, 2026-05-20)
 
-> *"Esto es para hardwork enterprises, no para el niñato de OpenClaw que dice
-> 'wow mira qué chulo'. Yo no debí darme cuenta de que iba a montar Docker +
-> pg + qdrant + valkey — sencillamente está y listo. No me interesa cómo
-> funciona mientras funcione."*
+> *"This is for hardwork enterprises, not for the OpenClaw newbie who
+> says 'wow, look how cool'. I shouldn't have to realize I'm going to
+> stand up Docker + pg + qdrant + valkey — it just IS, and done. I
+> don't care how it works as long as it works."*  — Mario, 2026-05-20
 
 **Supersedes HANDOFF §4.1 step 2** (the "Run `pnpm celiums-cognition setup`"
 instruction). The user MUST NOT have to run a setup step.
@@ -245,18 +245,18 @@ differentiator vs. memory-core / memory-lancedb (file-based, simple).
 - [x] Fase 2 — engine vendored from celiums-memory v2.0.0 (commit 6012e714):
       252 files + memory-types pkg, build ESM+DTS green, typecheck clean,
       704 logic tests pass / 19 skip / 0 fail. 5 workspace packages.
-- [x] Fase 3 — plugin Hard ✅ CERRADA. Commits d492e90 → f39fb17 → 9babbe4.
-      Verificado en PRODUCCIÓN sobre VPS de Mario (OpenClaw 2026.5.18,
-      usuario openclaw, systemd-user daemon + linger). Plugin reemplazó el
-      slot exclusivo `memory` del gateway (`memory-core` → `celiums-cognition`,
-      HANDOFF §1.1 cumplido). Runtime: status=loaded, 9 tools registrados
-      en vivo (absorb, ethics_trace, forage, journal_recall, journal_write,
-      map_network, recall, remember, sense) + service `celiums-cognition`.
-      Receta canónica usada: `loginctl enable-linger openclaw` +
+- [x] Fase 3 — Hard plugin ✅ CLOSED. Commits d492e90 → f39fb17 → 9babbe4.
+      Verified in PRODUCTION on Mario's VPS (OpenClaw 2026.5.18, user
+      `openclaw`, systemd-user daemon + linger). The plugin replaced the
+      gateway's exclusive `memory` slot (`memory-core` → `celiums-cognition`,
+      HANDOFF §1.1 fulfilled). Runtime: status=loaded, 9 tools registered
+      live (absorb, ethics_trace, forage, journal_recall, journal_write,
+      map_network, recall, remember, sense) + `celiums-cognition` service.
+      Canonical recipe used: `loginctl enable-linger openclaw` +
       `npm i -g openclaw@latest` + `openclaw gateway install` +
       rsync→chown→clean-pkg→`npm install` +
       `openclaw plugins install --link --dangerously-force-unsafe-install`
-      (break-glass legítimo per docs/cli/security.md) +
+      (legitimate break-glass per docs/cli/security.md) +
       `systemctl --user enable --now openclaw-gateway`.
 - [ ] Fase 4 — plugin Lite (pglite-embedded adapter; unblocked)
 - [ ] Fase 5 — READMEs + docs + examples
