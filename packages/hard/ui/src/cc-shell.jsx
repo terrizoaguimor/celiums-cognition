@@ -65,7 +65,7 @@ export function CCConsoleShell({ route, onNavigate, counts, health, theme = "lig
         }}>
           Cognition
           <span style={{ color: "var(--c-fg-subtle)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
-            plugin · v{health.version}
+            plugin · v{health?.version ?? "…"}
           </span>
           <Ico.chevDown width={11} height={11} style={{ opacity: .5 }} />
         </button>
@@ -76,8 +76,8 @@ export function CCConsoleShell({ route, onNavigate, counts, health, theme = "lig
           display: "inline-flex", alignItems: "center", gap: 6,
           fontSize: 11.5, color: "var(--c-fg-muted)", fontFamily: "var(--font-mono)",
         }}>
-          <span className={`celiums-dot ${health.allOk ? "" : "red"} live`} />
-          <span>{health.allOk ? "stack healthy" : "stack issue"}</span>
+          <span className={`celiums-dot ${health?.allOk ? "" : "red"} live`} />
+          <span>{health == null ? "checking…" : (health.allOk ? "stack healthy" : "stack issue")}</span>
           <span style={{ color: "var(--c-fg-faint)" }}>· polled 5s</span>
         </div>
 
@@ -150,7 +150,7 @@ export function CCConsoleShell({ route, onNavigate, counts, health, theme = "lig
             padding: "10px 10px", fontSize: 11.5, color: "var(--c-fg-muted)",
             display: "flex", alignItems: "center", gap: 8,
           }}>
-            <span className={`celiums-dot ${health.allOk ? "" : "red"}`} />
+            <span className={`celiums-dot ${health?.allOk ? "" : "red"}`} />
             <div style={{ minWidth: 0, flex: 1, lineHeight: 1.3 }}>
               <div style={{ color: "var(--c-fg)", fontWeight: 500, fontSize: 12.5 }}>{user?.name || "Operator"}</div>
               <div style={{ color: "var(--c-fg-subtle)", fontFamily: "var(--font-mono)", fontSize: 11 }}>

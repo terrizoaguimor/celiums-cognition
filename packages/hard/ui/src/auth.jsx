@@ -16,14 +16,14 @@ import {
  * the session via an HttpOnly cookie. The frontend just walks the user
  * through it visually. */
 
-export function AuthFlow({ mode, theme = "light", onComplete }) {
+export function AuthFlow({ mode, theme = "light", onToggleTheme, onComplete }) {
   return mode === "onboard"
-    ? <Onboarding theme={theme} onComplete={onComplete} />
-    : <LogIn theme={theme} onComplete={onComplete} />;
+    ? <Onboarding theme={theme} onToggleTheme={onToggleTheme} onComplete={onComplete} />
+    : <LogIn theme={theme} onToggleTheme={onToggleTheme} onComplete={onComplete} />;
 }
 
 /* ─────────────────────── Onboarding (3 steps) ─────────────────────── */
-export function Onboarding({ theme = "light", onComplete }) {
+export function Onboarding({ theme = "light", onToggleTheme, onComplete }) {
   const [step, setStep] = useState(0);
   // 0 account · 1 totp setup · 2 recovery · 3 finished
   const [username, setUsername] = useState("");
@@ -63,7 +63,7 @@ export function Onboarding({ theme = "light", onComplete }) {
   };
 
   return (
-    <PreAuthShell theme={theme} width="100vw" height="100vh">
+    <PreAuthShell theme={theme} width="100vw" height="100vh" onToggleTheme={onToggleTheme}>
       {{
         _sideLink: step === 0 && (<>Have an account? <a className="celiums-link" style={{ marginLeft: 4 }} onClick={() => onComplete({ existing: true })}>Log in</a></>),
         main: (
@@ -371,8 +371,8 @@ export function FinishedStep({ onEnter }) {
 }
 
 /* ─────────────────────── Login (returning) ─────────────────────── */
-export function LogIn({ theme = "light", onComplete }) {
-  const [step, setStep] = useState("credentials"); // credentials | totp
+export function LogIn({ theme = "light", onToggleTheme, onComplete }) {
+  const [step, setStep] = useState("credentials"); // credentials | totp | totp_setup
   const [identifier, setIdentifier] = useState("");
   const [pwd, setPwd] = useState("");
   const [code, setCode] = useState(["", "", "", "", "", ""]);
@@ -381,6 +381,9 @@ export function LogIn({ theme = "light", onComplete }) {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [displayName, setDisplayName] = useState("");
+  // For the resume-TOTP-setup path (account exists with totp_enabled=false):
+  const [resumeSecret, setResumeSecret] = useState("");
+  const [resumeUri, setResumeUri] = useState("");
   const refs = useRef([]);
 
   const submitPwd = async () => {
@@ -393,7 +396,14 @@ export function LogIn({ theme = "light", onComplete }) {
     try {
       const r = await authLogin({ username: identifier.trim(), password: pwd });
       setDisplayName(r.username || "");
-      if (r.requires_totp) {
+      if (r.requires_totp_setup) {
+        // Account exists but TOTP enrollment was abandoned. Server has
+        // handed us a pending_totp_setup session and the original secret
+        // so the user can finish enrolling without re-signing-up.
+        setResumeSecret(r.totp_secret);
+        setResumeUri(r.totp_uri);
+        setStep("totp_setup");
+      } else if (r.requires_totp) {
         setStep("totp");
       } else {
         onComplete({ existing: true });
@@ -441,7 +451,7 @@ export function LogIn({ theme = "light", onComplete }) {
   };
 
   return (
-    <PreAuthShell theme={theme} width="100vw" height="100vh">
+    <PreAuthShell theme={theme} width="100vw" height="100vh" onToggleTheme={onToggleTheme}>
       {{
         _sideLink: <>New here? <a className="celiums-link" style={{ marginLeft: 4 }}
                                     onClick={() => onComplete({ wantOnboard: true })}>Create account</a></>,
@@ -477,6 +487,16 @@ export function LogIn({ theme = "light", onComplete }) {
                   </button>
                 </div>
               </>
+            )}
+
+            {step === "totp_setup" && (
+              <TotpStep
+                username={displayName || identifier}
+                secret={resumeSecret}
+                otpauthUri={resumeUri}
+                onBack={() => setStep("credentials")}
+                onVerified={() => onComplete({ existing: true })}
+              />
             )}
 
             {step === "totp" && (

@@ -123,20 +123,21 @@ export function useQuery(fn, deps = []) {
 
 /* Visual identity for each pillar — ordered for stable list rendering.
  * Live counts come from /pillars endpoint; this map only carries
- * color + icon. */
+ * color + icon. Keep aligned with the seed corpus categories
+ * (curated in celiums-memory v2.0 — 10 pillars × 1000 modules each). */
 export const PILLAR_META = {
-  "ai-ml":          { color: "#a78bfa", icon: "🧠" },
-  "backend":        { color: "#60a5fa", icon: "⚙" },
-  "frontend":       { color: "#34d399", icon: "◐" },
-  "mobile":         { color: "#f472b6", icon: "▢" },
-  "devops":         { color: "#fbbf24", icon: "⎈" },
-  "data":           { color: "#22d3ee", icon: "≋" },
-  "security":       { color: "#fb7185", icon: "⛨" },
-  "product":        { color: "#c4b5fd", icon: "✦" },
-  "research":       { color: "#86efac", icon: "⌬" },
-  "infrastructure": { color: "#fdba74", icon: "⚒" },
+  "ai-ml":                  { color: "#a78bfa", icon: "🧠" },
+  "backend":                { color: "#60a5fa", icon: "⚙" },
+  "frontend":               { color: "#34d399", icon: "◐" },
+  "mobile":                 { color: "#f472b6", icon: "▢" },
+  "devops":                 { color: "#fbbf24", icon: "⎈" },
+  "database":               { color: "#22d3ee", icon: "≋" },
+  "security":               { color: "#fb7185", icon: "⛨" },
+  "cognitive-patterns":     { color: "#c4b5fd", icon: "✦" },
+  "epistemic-practices":    { color: "#86efac", icon: "⌬" },
+  "human-ai-collaboration": { color: "#fdba74", icon: "⚒" },
   // Fallback for any pillar present in the corpus but not enumerated above:
-  "_default":       { color: "#9ca3af", icon: "•" },
+  "_default":               { color: "#9ca3af", icon: "•" },
 };
 
 export function pillarMeta(name) {

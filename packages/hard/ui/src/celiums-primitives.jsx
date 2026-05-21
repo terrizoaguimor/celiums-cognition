@@ -297,7 +297,8 @@ export function TrialBanner({ state = 'calm', daysLeft = 11 }) {
 }
 
 // ─── PreAuth shell: full-bleed background + brand mark in corner ───
-export function PreAuthShell({ theme = 'light', children, width = 1280, height = 800 }) {
+export function PreAuthShell({ theme = 'light', children, width = 1280, height = 800, onToggleTheme }) {
+  const isDark = theme === 'dark';
   return (
     <div className="celiums" data-theme={theme} style={{
       width, height, display: 'flex', flexDirection: 'column',
@@ -314,6 +315,26 @@ export function PreAuthShell({ theme = 'light', children, width = 1280, height =
         display: 'flex', alignItems: 'center', gap: 14,
         fontSize: 13, color: 'var(--c-fg-muted)',
       }}>
+        {onToggleTheme && (
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            title={isDark ? "Light mode" : "Dark mode"}
+            style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 30, height: 30,
+              background: 'transparent',
+              border: '1px solid var(--c-border)',
+              borderRadius: 6,
+              color: 'var(--c-fg-muted)',
+              cursor: 'pointer',
+              fontSize: 14,
+              padding: 0,
+            }}>
+            {isDark ? '☀' : '☾'}
+          </button>
+        )}
         {children._sideLink}
       </div>
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 40px' }}>

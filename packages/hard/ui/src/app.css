@@ -1127,12 +1127,22 @@ body {
 /*  TOTP / OTP                                               */
 /* ───────────────────────────────────────────────────────── */
 .cc-otp-input {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  display: flex;
   gap: 8px;
+  /* flex-start so the 6 boxes stay compact even if the parent is wider
+   * than the OTP cluster — guards against ancestor flex containers that
+   * try to stretch their children. */
+  justify-content: flex-start;
+  /* max-width belts-and-braces; the per-input flex-basis below is what
+   * actually pins the size. */
   max-width: 320px;
 }
 .cc-otp-input input {
+  /* Hard size each digit cell: 46px square so 6 cells + 5×8 gap fit in
+   * 316px. flex: 0 0 ... disables grow/shrink so a wider parent can't
+   * stretch them. */
+  flex: 0 0 46px;
+  width: 46px;
   text-align: center;
   font-family: var(--font-mono);
   font-size: 22px;
@@ -1144,6 +1154,9 @@ body {
   outline: none;
   transition: all 0.12s ease;
   font-variant-numeric: tabular-nums;
+  /* Override `.celiums-input`-style global width if it ever lands here. */
+  min-width: 0;
+  box-sizing: border-box;
 }
 .cc-otp-input input:focus {
   border-color: var(--c-green);

@@ -141,6 +141,7 @@ export function App() {
         <AuthFlow
           mode={authState}
           theme={values.theme}
+          onToggleTheme={() => setTweak("theme", values.theme === "dark" ? "light" : "dark")}
           onComplete={(res) => {
             // res may carry { existing, wantOnboard }; either way, re-check
             // the server to derive the new state.

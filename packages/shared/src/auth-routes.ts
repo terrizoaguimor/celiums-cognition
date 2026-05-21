@@ -500,16 +500,22 @@ async function authLogin(
     });
     return;
   }
-  // No TOTP enrolled — straight to active. (Shouldn't normally happen
-  // because signup mandates TOTP, but defensive in case operator clears
-  // totp_enabled out-of-band.)
-  await ctx.pool.query(
-    `UPDATE accounts SET last_login_at = now() WHERE id = 1`,
-  );
-  const sid = await createSession(ctx, 1, "active");
+  // TOTP not enrolled — the user signed up but abandoned/failed step 2.
+  // We refuse to log them in (defeating 2FA would be wrong), but we DO
+  // hand them a pending_totp_setup session so the frontend can route
+  // them straight into the QR + verify step without re-typing the
+  // password. The TOTP secret stored at signup is reused.
+  const sid = await createSession(ctx, 1, "pending_totp_setup");
   setSessionCookie(res, sid);
-  ctx.logger?.info?.(`auth: login (no-totp) for ${acct.username}`);
-  sendJson(res, 200, { requires_totp: false, username: acct.username });
+  ctx.logger?.warn?.(
+    `auth: login refused for ${acct.username} — TOTP not enrolled, resuming setup`,
+  );
+  sendJson(res, 200, {
+    requires_totp_setup: true,
+    username: acct.username,
+    totp_secret: acct.totp_secret,
+    totp_uri: totpAuthUri(acct.totp_secret, acct.username, acct.email),
+  });
 }
 
 // ─── endpoint: /auth/login/totp ────────────────────────────────────────

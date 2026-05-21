@@ -365,7 +365,7 @@ async function skillsSearch(
         return sendJson(res, 200, {
           total: Number(totalRows[0]?.n ?? 0),
           mode: "semantic",
-          results: rows.map((r) => ({
+          skills: rows.map((r) => ({
             name: r.name,
             display_name: r.display_name,
             description: r.description,
@@ -413,7 +413,7 @@ async function skillsSearch(
     sendJson(res, 200, {
       total: Number(totalRows[0]?.n ?? 0),
       mode: q ? "fts" : "browse",
-      results: rows.map((r) => ({
+      skills: rows.map((r) => ({
         name: r.name,
         display_name: r.display_name,
         description: r.description,
