@@ -60,6 +60,39 @@ function parseQuery(req: IncomingMessage): URLSearchParams {
   return url.searchParams;
 }
 
+/** Per-request guard: reject requests with absurdly long URLs.
+ *  Defense-in-depth against DoS via pathological query strings
+ *  (regex backtracking inside trigram/FTS, accidental log inflation,
+ *  memory pressure parsing). Tuned generously: 8 KB covers any
+ *  legitimate filter combo we expose. */
+const MAX_URL_BYTES = 8 * 1024;
+
+function urlTooLarge(req: IncomingMessage): boolean {
+  return (req.url ?? "").length > MAX_URL_BYTES;
+}
+
+/** Map PG / engine error strings to a stable, non-leaky surface.
+ *  We were echoing `String(err)` directly, which on duplicate-key /
+ *  constraint violations exposes column/index names (e.g.,
+ *  "duplicate key value violates unique constraint accounts_email_key").
+ *  That's an information-disclosure surface for an attacker probing the
+ *  schema. Map known kinds, otherwise return a generic message. */
+function sanitizeDbError(err: unknown): string {
+  if (err instanceof Error) {
+    const s = err.message;
+    if (/duplicate key/i.test(s)) return "duplicate value";
+    if (/violates foreign key/i.test(s)) return "referenced row missing";
+    if (/null value in column/i.test(s)) return "required field missing";
+    if (/violates check constraint/i.test(s)) return "constraint violation";
+    if (/permission denied/i.test(s)) return "operation denied";
+    if (/relation .* does not exist/i.test(s)) return "internal: schema mismatch";
+    // For everything else: a generic message + a stable error class so
+    // operators can correlate logs without exposing details on the wire.
+    return "internal db error";
+  }
+  return "internal error";
+}
+
 /** Probe a TCP listener with a short timeout (used by /health). */
 function probeListener(
   host: string,
@@ -280,7 +313,7 @@ async function pillars(
       })),
     });
   } catch (err) {
-    sendError(res, 500, "DB_ERROR", String(err));
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
   }
 }
 
@@ -443,7 +476,7 @@ async function skillsSearch(
       })),
     });
   } catch (err) {
-    sendError(res, 500, "DB_ERROR", String(err));
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
   }
 }
 
@@ -474,7 +507,7 @@ async function skillDetail(
     }
     sendJson(res, 200, { skill: rows[0] });
   } catch (err) {
-    sendError(res, 500, "DB_ERROR", String(err));
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
   }
 }
 
@@ -586,7 +619,7 @@ async function memoriesList(
       bucket: bucket || "all",
     });
   } catch (err) {
-    sendError(res, 500, "DB_ERROR", String(err));
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
   }
 }
 
@@ -641,7 +674,7 @@ async function journalRecent(
       agent_id: agentId || null,
     });
   } catch (err) {
-    sendError(res, 500, "DB_ERROR", String(err));
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
   }
 }
 
@@ -687,7 +720,7 @@ async function journalAgents(
     );
     sendJson(res, 200, { agents: rows });
   } catch (err) {
-    sendError(res, 500, "DB_ERROR", String(err));
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
   }
 }
 
@@ -738,7 +771,7 @@ async function ethicsEvents(
       offset,
     });
   } catch (err) {
-    sendError(res, 500, "DB_ERROR", String(err));
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
   }
 }
 
@@ -838,7 +871,7 @@ async function activityRecent(
     const { rows } = await ctx.pool.query(sql, [lim]);
     sendJson(res, 200, { events: rows });
   } catch (err) {
-    sendError(res, 500, "DB_ERROR", String(err));
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
   }
 }
 
@@ -940,7 +973,7 @@ async function settingsTimezoneGet(
       offset_minutes: Math.round(Number(row.timezone_offset) * 60),
     });
   } catch (err) {
-    sendError(res, 500, "DB_ERROR", String(err));
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
   }
 }
 
@@ -994,7 +1027,7 @@ async function settingsTimezonePut(
     );
     sendJson(res, 200, { iana, offset_minutes: Math.round(offsetHours * 60) });
   } catch (err) {
-    sendError(res, 500, "DB_ERROR", String(err));
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
   }
 }
 
@@ -1255,6 +1288,13 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
   }
 
   const dispatch: UiRouteHandler = async (req, res) => {
+    // Hard cap on URL size — anything over 8KB is rejected before any
+    // handler touches it. Cheap DoS defense (regex backtracking inside
+    // FTS, log inflation, request-line parsing memory) and keeps the
+    // attack surface for query-string injection bounded.
+    if (urlTooLarge(req)) {
+      return sendError(res, 414, "URI_TOO_LONG", "request URI exceeds 8 KB");
+    }
     const path = (req.url || "/").split("?")[0];
     // Strip plugin prefix if present — gateway routes by prefix match
     const p = path.replace(/^.*?\/api\/celiums-cognition/, "");

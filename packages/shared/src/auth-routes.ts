@@ -357,15 +357,51 @@ async function createSession(
   return sid;
 }
 
+/**
+ * Privilege-escalation session upgrade — rotates the session id at the
+ * same time as the scope change.
+ *
+ * Session-fixation defense (2026-05-21 audit, Atlas cross-check):
+ * an attacker who somehow seeds a victim's pending_totp_setup cookie
+ * before the victim completes enrolment would inherit the active
+ * cookie if the id stayed stable across the scope flip. By emitting
+ * a fresh id on every upgrade and deleting the old row, we guarantee
+ * any pre-escalation knowledge of the session id is dead by the time
+ * the session becomes useful.
+ *
+ * Returns the new session id so the caller can set it on the cookie.
+ */
 async function upgradeSession(
   ctx: AuthCtx,
-  sid: string,
+  oldSid: string,
   scope: SessionRow["scope"],
-): Promise<void> {
-  await ctx.pool.query(`UPDATE auth_sessions SET scope = $1 WHERE id = $2`, [
-    scope,
-    sid,
-  ]);
+): Promise<string> {
+  const newSid = newSessionId();
+  const expires = new Date(Date.now() + SESSION_TTL_MS);
+  // Single-statement chained transaction so the rotation is atomic —
+  // either both rows update or neither does.
+  await ctx.pool.query("BEGIN");
+  try {
+    const { rows } = await ctx.pool.query<{ account_id: number }>(
+      `SELECT account_id FROM auth_sessions WHERE id = $1 LIMIT 1`,
+      [oldSid],
+    );
+    if (rows.length === 0) {
+      await ctx.pool.query("ROLLBACK");
+      throw new Error("session not found for upgrade");
+    }
+    await ctx.pool.query(
+      `INSERT INTO auth_sessions (id, account_id, scope, expires_at)
+         VALUES ($1, $2, $3, $4)`,
+      [newSid, rows[0].account_id, scope, expires],
+    );
+    await ctx.pool.query(`DELETE FROM auth_sessions WHERE id = $1`, [oldSid]);
+    await ctx.pool.query("COMMIT");
+  } catch (err) {
+    try { await ctx.pool.query("ROLLBACK"); } catch { /* swallow */ }
+    throw err;
+  }
+  return newSid;
 }
 
 async function deleteSession(ctx: AuthCtx, sid: string): Promise<void> {
@@ -552,7 +588,8 @@ async function authTotpVerify(
   await ctx.pool.query(
     `UPDATE accounts SET totp_enabled = true, last_login_at = now() WHERE id = 1`,
   );
-  await upgradeSession(ctx, sess.session.id, "active");
+  const newSid = await upgradeSession(ctx, sess.session.id, "active");
+  setSessionCookie(res, newSid);
   ctx.logger?.info?.(`auth: TOTP enrolled for ${sess.account.username}`);
   sendJson(res, 200, { ok: true });
 }
@@ -581,8 +618,17 @@ async function authLogin(
     return sendError(res, 400, "INVALID_INPUT", "username and password required");
   }
   const acct = await getAccount(ctx);
+  // Account-enumeration defense (2026-05-21 audit, Atlas cross-check):
+  // never distinguish "no account" from "bad credentials" — both
+  // return 401. An attacker can already learn whether signup is open
+  // via /auth/me's can_signup, but that's a single bit; this keeps the
+  // login surface consistent regardless. Also keep a fake verify call
+  // on the no-account path so timing stays comparable.
   if (!acct) {
-    return sendError(res, 404, "NO_ACCOUNT", "no account provisioned");
+    // Constant-time fake compare so an attacker can't distinguish
+    // "no account" from "wrong password" via response timing.
+    verifyPassword(password, "pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+    return sendError(res, 401, "BAD_CREDENTIALS", "invalid credentials");
   }
   // Match against username OR email, case-insensitive.
   const matchesIdent =
@@ -661,19 +707,26 @@ async function authLoginTotp(
     }
   } else if (recoveryRaw) {
     const hashed = hashRecovery(recoveryRaw);
-    const idx = sess.account.recovery_codes_hashed.indexOf(hashed);
-    if (idx < 0) {
-      return sendError(res, 401, "BAD_RECOVERY", "invalid recovery code");
-    }
-    // Single-use: remove from array atomically.
-    await ctx.pool.query(
+    // Atomic check-and-consume (2026-05-21 audit, Atlas cross-check):
+    // single statement that removes the code IFF it's present and
+    // returns the surviving array. If no row updated, the code wasn't
+    // valid (or another concurrent request just consumed it). Closes
+    // the TOCTOU window between the in-memory check and the DB write.
+    const { rowCount, rows: updRows } = await ctx.pool.query<{
+      remaining_codes: string[] | null;
+    }>(
       `UPDATE accounts
           SET recovery_codes_hashed = array_remove(recovery_codes_hashed, $1)
-        WHERE id = 1`,
+        WHERE id = 1 AND $1 = ANY(recovery_codes_hashed)
+        RETURNING recovery_codes_hashed AS remaining_codes`,
       [hashed],
     );
+    if (rowCount === 0) {
+      return sendError(res, 401, "BAD_RECOVERY", "invalid recovery code");
+    }
+    const remaining = updRows[0]?.remaining_codes?.length ?? 0;
     ctx.logger?.warn?.(
-      `auth: recovery code consumed for ${sess.account.username} (${sess.account.recovery_codes_hashed.length - 1} remaining)`,
+      `auth: recovery code consumed for ${sess.account.username} (${remaining} remaining)`,
     );
   } else {
     return sendError(res, 400, "INVALID_INPUT", "code or recovery_code required");
@@ -681,7 +734,8 @@ async function authLoginTotp(
   await ctx.pool.query(
     `UPDATE accounts SET last_login_at = now() WHERE id = 1`,
   );
-  await upgradeSession(ctx, sess.session.id, "active");
+  const newSid2 = await upgradeSession(ctx, sess.session.id, "active");
+  setSessionCookie(res, newSid2);
   ctx.logger?.info?.(`auth: login complete for ${sess.account.username}`);
   sendJson(res, 200, { ok: true });
 }
