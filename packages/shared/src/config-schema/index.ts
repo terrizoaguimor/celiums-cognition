@@ -14,6 +14,11 @@
 
 export type ExposedTools = "curated" | "all";
 
+/** Operator-visible label for the ethics policy state. Derived from
+ *  the boolean flags so adding a fourth flag does not multiply the
+ *  schema surface. See `deriveEthicsMode`. */
+export type EthicsMode = "off" | "radar" | "enforce";
+
 export interface CognitionConfig {
   agentId: string;
   userId?: string;
@@ -155,6 +160,17 @@ export function parseConfig(raw: unknown): CognitionConfig {
   };
   if (typeof c.userId === "string" && c.userId) cfg.userId = c.userId;
   return cfg;
+}
+
+/** Audit P1 #5: three sites previously did
+ *  `(cfg as { ethics?: { mode?: string } }).ethics?.mode ?? "radar"`
+ *  — a cast against a field that did not exist, so the ethics widget
+ *  on the operator dashboard always showed "radar" regardless of
+ *  config. This helper derives the operator-visible label from the
+ *  flags that DO exist: enabled + strictMode. */
+export function deriveEthicsMode(cfg: CognitionConfig): EthicsMode {
+  if (!cfg.ethics.enabled) return "off";
+  return cfg.ethics.strictMode ? "enforce" : "radar";
 }
 
 /** Merge edition-specific properties (Hard: database.*, Lite: embeddings.*). */

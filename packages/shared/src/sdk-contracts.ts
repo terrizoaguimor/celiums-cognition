@@ -161,17 +161,9 @@ export const BEFORE_COMPACTION_EVENT: ShapeSpec = {
   ],
 } as const;
 
-/** PluginHookAgentContext — supplied to every hook, carries agentId/session. */
-export const AGENT_CONTEXT: ShapeSpec = {
-  name: "agent_context",
-  versionTag: "openclaw@2026.5.19-beta.1",
-  fields: [
-    { path: "agentId", type: "string", required: false },
-    { path: "sessionId", type: "string", required: false },
-    { path: "sessionKey", type: "string", required: false },
-    { path: "conversationId", type: "string", required: false },
-  ],
-} as const;
+// AGENT_CONTEXT shape removed — every consumer reads hookCtx fields with
+// optional-chain access (?.agentId, ?.sessionId), so validation would
+// always pass. If a future hook needs strict ctx validation, redeclare.
 
 // ─── validator ─────────────────────────────────────────────────────────
 
@@ -281,17 +273,7 @@ export function withShapeValidation<E, C, R>(
   };
 }
 
-/**
- * Feature-detect a register* method on the api object. Returns the
- * bound function when present, undefined when the host SDK doesn't
- * expose it. Caller logs the absence at info level so operators see
- * which seams are missing on their gateway version.
- */
-export function detectApiMethod<T extends string>(
-  api: unknown,
-  method: T,
-): ((...args: unknown[]) => unknown) | undefined {
-  if (!api || typeof api !== "object") return undefined;
-  const m = (api as Record<string, unknown>)[method];
-  return typeof m === "function" ? (m as never) : undefined;
-}
+// detectApiMethod helper removed — the plugin-adapter uses inline
+// `typeof (api as { x?: Function }).x === "function"` for the same
+// purpose, and centralising it added an indirection without removing
+// the cast. Audit P1 #18.

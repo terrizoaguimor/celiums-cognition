@@ -46,14 +46,7 @@ export interface CompactionProvider {
   }): Promise<string>;
 }
 
-interface PoolLike {
-  query: (sql: string, params?: unknown[]) => Promise<unknown>;
-}
-
-interface Logger {
-  info?: (m: string) => void;
-  warn?: (m: string) => void;
-}
+import type { PoolLike, Logger } from "./shared-types.js";
 
 export interface CompactionProviderDeps {
   getEngine: () => Promise<MemoryEngineWithStore>;

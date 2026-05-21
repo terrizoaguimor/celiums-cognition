@@ -52,12 +52,8 @@ export interface OperatorAction {
   handler: (ctx: OperatorActionContext) => Promise<OperatorActionResult>;
 }
 
-export interface PoolLike {
-  query(
-    sql: string,
-    params?: unknown[],
-  ): Promise<{ rows: Record<string, unknown>[] }>;
-}
+export type { PoolLike } from "./shared-types.js";
+import type { PoolLike } from "./shared-types.js";
 
 export interface ActionDeps {
   getEngine: () => Promise<MemoryEngineWithStore>;
@@ -80,8 +76,19 @@ interface PendingConfirmation {
 const pending = new Map<string, PendingConfirmation>();
 const CONFIRM_WINDOW_MS = 10_000;
 
-function pendingKey(sessionKey: string | undefined, action: string): string {
-  return `${sessionKey ?? "_global"}:${action}`;
+/** Pending-confirmation key. Audit P1 #17: previously keyed by
+ *  (sessionKey, action) alone, so two concurrent first-presses for
+ *  the same action with DIFFERENT memory_ids would race — the second
+ *  overwrote the first's token and the operator could end up
+ *  confirming memory A with the token armed for memory B. Including
+ *  the target id (or the schema-validated payload identifier) makes
+ *  each (caller, action, target) tuple its own bucket — no race. */
+function pendingKey(
+  sessionKey: string | undefined,
+  action: string,
+  targetId: string,
+): string {
+  return `${sessionKey ?? "_global"}:${action}:${targetId}`;
 }
 
 function sweepPending(): void {
@@ -324,7 +331,9 @@ export function makeForgetAction(deps: ActionDeps): OperatorAction {
         return { ok: false, error: "reason required", code: "INVALID_PAYLOAD" };
       }
       sweepPending();
-      const key = pendingKey(ctx.sessionKey, "celiums.forget");
+      // Include the memory_id in the key so concurrent arms for
+      // different memories cannot overwrite each other's tokens.
+      const key = pendingKey(ctx.sessionKey, "celiums.forget", payload.memory_id);
       // First press — arm the confirmation.
       if (!payload.confirm) {
         const token = randomBytes(16).toString("base64url");

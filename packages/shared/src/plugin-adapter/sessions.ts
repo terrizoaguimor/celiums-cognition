@@ -110,12 +110,8 @@ export function consumeSessionEnd(
 
 // ─── pool abstraction ──────────────────────────────────────────────────
 
-export interface PoolLike {
-  query(
-    sql: string,
-    params?: unknown[],
-  ): Promise<{ rows: Record<string, unknown>[] }>;
-}
+export type { PoolLike } from "./shared-types.js";
+import type { PoolLike } from "./shared-types.js";
 
 // ─── summary builder ───────────────────────────────────────────────────
 

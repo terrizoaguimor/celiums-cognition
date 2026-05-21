@@ -31,15 +31,12 @@
 //   PluginNextTurnInjectionEnqueueResult     (hook-types:256-260)
 
 import { type MemoryEngineWithStore, journalWrite } from "@celiumsai/cognition-engine";
+import { TAG_AUTO, TAG_TOOL_RESULT, TAG_THROTTLED } from "./journal-tags.js";
 
 // ─── pool + deps abstraction ───────────────────────────────────────────
 
-export interface PoolLike {
-  query(
-    sql: string,
-    params?: unknown[],
-  ): Promise<{ rows: Record<string, unknown>[] }>;
-}
+export type { PoolLike } from "./shared-types.js";
+import type { PoolLike, Logger } from "./shared-types.js";
 
 export interface AutonomyDeps {
   getEngine: () => Promise<MemoryEngineWithStore>;
@@ -47,7 +44,7 @@ export interface AutonomyDeps {
   userId: string;
   agentId: string;
   ethicsMode: string;
-  logger?: { info?: (m: string) => void; warn?: (m: string) => void };
+  logger?: Logger;
 }
 
 // ─── heartbeat snapshot ────────────────────────────────────────────────
@@ -232,7 +229,7 @@ export async function writeToolResultJournal(
             `.`,
           valence: 0,
           valence_reason: "tool result auto-trace",
-          tags: ["auto", "tool-result", decision.toolName],
+          tags: [TAG_AUTO, TAG_TOOL_RESULT, decision.toolName],
           visibility: "self",
           agent_id: deps.agentId,
         },
@@ -254,7 +251,7 @@ export async function writeToolResultJournal(
             `Inspect via \`turn_after\` or the dashboard if needed.`,
           valence: -0.05,
           valence_reason: "tool flood summary",
-          tags: ["auto", "tool-result", "throttled"],
+          tags: [TAG_AUTO, TAG_TOOL_RESULT, TAG_THROTTLED],
           visibility: "self",
           agent_id: deps.agentId,
         },

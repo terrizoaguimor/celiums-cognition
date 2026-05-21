@@ -22,17 +22,8 @@ import {
   type JournalEntryType,
 } from "@celiumsai/cognition-engine";
 
-export interface PoolLike {
-  query: <T = Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-  ) => Promise<{ rows: T[]; rowCount?: number | null }>;
-}
-
-interface Logger {
-  info?: (m: string) => void;
-  warn?: (m: string) => void;
-}
+export type { PoolLike, Logger } from "./shared-types.js";
+import type { PoolLike, Logger } from "./shared-types.js";
 
 export interface SubagentConfig {
   /** Max nesting depth from root agent. Default 3.

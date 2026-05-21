@@ -27,7 +27,14 @@ import {
   type ModuleStore,
   type JournalEntryType,
 } from "@celiumsai/cognition-engine";
-import { parseConfig, type CognitionConfig } from "../config-schema/index.js";
+import { parseConfig, deriveEthicsMode, type CognitionConfig } from "../config-schema/index.js";
+import { resolveAgentId } from "./shared-types.js";
+import {
+  TAG_SUBAGENT_REFUSED, TAG_LOOP_GUARD, TAG_SPAWNED_SUBAGENT,
+  TAG_SESSION_END, TAG_SUBAGENT,
+  TAG_AUTO, TAG_AGENT_END, TAG_WITH_TOOLS,
+  tagFromSubagent, tagSessionReason,
+} from "./journal-tags.js";
 import { selectTools, CURATED_TOOL_NAMES, type EngineToolLike } from "../tool-curator/index.js";
 import {
   applyIfNeeded as applySeedIfNeeded,
@@ -65,6 +72,9 @@ import {
   SUBAGENT_ENDED_EVENT,
   SESSION_START_EVENT,
   SESSION_END_EVENT,
+  BEFORE_PROMPT_BUILD_EVENT,
+  AGENT_END_EVENT,
+  BEFORE_COMPACTION_EVENT,
 } from "../sdk-contracts.js";
 import {
   rememberSessionStart,
@@ -501,14 +511,19 @@ export function createCognitionPlugin(edition: EditionOptions) {
       // which lets us correlate journal entries with context events.
       api.on(
         "before_compaction",
-        async (
-          event: { messageCount?: number; tokenCount?: number },
-          hookCtx: { agentId?: string; sessionId?: string },
-        ) => {
-          api.logger.info(
-            `celiums-cognition: before_compaction · agent=${hookCtx?.agentId ?? cfg.agentId} · ${event.messageCount ?? "?"} msgs · ${event.tokenCount ?? "?"} tokens`,
-          );
-        },
+        withShapeValidation(
+          BEFORE_COMPACTION_EVENT,
+          async (
+            event: { messageCount?: number; tokenCount?: number },
+            hookCtx: { agentId?: string; sessionId?: string },
+          ) => {
+            api.logger.info(
+              `celiums-cognition: before_compaction · agent=${resolveAgentId([hookCtx?.agentId], cfg.agentId)} · ${event.messageCount ?? "?"} msgs · ${event.tokenCount ?? "?"} tokens`,
+            );
+            return undefined;
+          },
+          { warn: (m) => api.logger.warn?.(m) },
+        ),
       );
       api.on(
         "after_compaction",
@@ -517,7 +532,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
           hookCtx: { agentId?: string; sessionId?: string },
         ) => {
           api.logger.info(
-            `celiums-cognition: after_compaction · agent=${hookCtx?.agentId ?? cfg.agentId}`,
+            `celiums-cognition: after_compaction · agent=${resolveAgentId([hookCtx?.agentId], cfg.agentId)}`,
           );
         },
       );
@@ -556,7 +571,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
               const parentEntry = getCachedParent(tKey);
               // Determine parent identity. Falls back to cfg.agentId for
               // root-level spawns where we can't observe a prior parent.
-              const parentAgentId = parentEntry?.parentAgentId ?? cfg.agentId;
+              const parentAgentId = resolveAgentId([parentEntry?.parentAgentId, hookCtx?.agentId], cfg.agentId);
               // Loop guard: refuse if ancestral depth would exceed max.
               const guard = await shouldRefuseSpawn({ pool: pool as never, parentAgentId, cfg: subagentCfg });
               if (guard.refuse) {
@@ -571,7 +586,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
                   content: `Refused to spawn subagent \`${event.agentId}\` for task "${event.label ?? "(unlabeled)"}" — ${guard.reason}.`,
                   valence: -0.2,
                   valenceReason: "subagent spawn depth guard",
-                  tags: ["subagent-refused", "loop-guard"],
+                  tags: [TAG_SUBAGENT_REFUSED, TAG_LOOP_GUARD],
                   conversationId: parentEntry?.conversationId,
                 });
                 return { status: "error" as const, error: guard.reason };
@@ -590,7 +605,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
                   (event.requester?.channel ? ` Via channel: ${event.requester.channel}.` : ""),
                 valence: 0.1,
                 valenceReason: "delegating to subagent",
-                tags: ["spawned-subagent", event.agentId],
+                tags: [TAG_SPAWNED_SUBAGENT, event.agentId],
                 conversationId: parentEntry?.conversationId,
               });
               // Insert lineage row early so subagent's before_prompt_build
@@ -696,7 +711,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
                   (event.error ? ` Error: ${event.error.slice(0, 400)}.` : ""),
                 valence: outcomeOk ? 0.1 : -0.3,
                 valenceReason: `subagent ended with outcome=${event.outcome ?? "unspecified"}`,
-                tags: ["session-end", "subagent"],
+                tags: [TAG_SESSION_END, TAG_SUBAGENT],
                 conversationId: lin.conversation_id ?? undefined,
               });
               // Parent's retrospective — lesson on failure paths,
@@ -715,7 +730,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
                   ` See chain agent_id=${lin.child_agent_id}.`,
                 valence: outcomeOk ? 0.2 : -0.3,
                 valenceReason: `subagent retrospective on parent chain`,
-                tags: [`from-subagent:${lin.child_agent_id}`],
+                tags: [tagFromSubagent(lin.child_agent_id)],
                 conversationId: lin.conversation_id ?? undefined,
               });
               // Close lineage row.
@@ -777,7 +792,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
               const engine = await getEngine();
               const pool = extractEnginePool(engine);
               if (!pool) return undefined;
-              const effectiveAgent = hookCtx?.agentId ?? cfg.agentId;
+              const effectiveAgent = resolveAgentId([hookCtx?.agentId], cfg.agentId);
               rememberSessionStart(
                 event.sessionId,
                 effectiveAgent,
@@ -845,7 +860,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
               const pool = extractEnginePool(engine);
               if (!pool) return undefined;
               const tracked = consumeSessionEnd(event.sessionId);
-              const effectiveAgent = tracked?.agentId ?? hookCtx?.agentId ?? cfg.agentId;
+              const effectiveAgent = resolveAgentId([tracked?.agentId, hookCtx?.agentId], cfg.agentId);
               const reasonStr = event.reason ?? "unknown";
               const summary = await composeSessionEndSummary({
                 pool: pool as never,
@@ -867,7 +882,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
                 content: summary.text,
                 valence: 0,
                 valenceReason: "session boundary — neutral closing arc",
-                tags: ["session-end", `reason:${reasonStr}`],
+                tags: [TAG_SESSION_END, tagSessionReason(reasonStr)],
                 conversationId: event.sessionId,
               });
               api.logger.info(
@@ -903,7 +918,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
         extractPool: extractEnginePool as never,
         userId,
         agentId: cfg.agentId,
-        ethicsMode: (cfg as { ethics?: { mode?: string } }).ethics?.mode ?? "radar",
+        ethicsMode: deriveEthicsMode(cfg),
         logger: {
           info: (m: string) => api.logger.info(m),
           warn: (m: string) => api.logger.warn?.(m),
@@ -1079,10 +1094,12 @@ export function createCognitionPlugin(edition: EditionOptions) {
       // Falls back to the older lightweight auto-recall path on any
       // failure: a turn must NEVER be blocked by this hook.
       if (cfg.autoRecall.enabled) {
-        api.on("before_prompt_build", async (
-          event: { prompt?: string; messages?: unknown; agentId?: string },
-          hookCtx: { sessionKey?: string; sessionId?: string; agentId?: string; conversationId?: string },
-        ) => {
+        api.on("before_prompt_build", withShapeValidation(
+          BEFORE_PROMPT_BUILD_EVENT,
+          async (
+            event: { prompt?: string; messages?: unknown; agentId?: string },
+            hookCtx: { sessionKey?: string; sessionId?: string; agentId?: string; conversationId?: string },
+          ) => {
           if (!gateReady()) return undefined;
           const q = (latestUserText(event.messages) ?? event.prompt ?? "").trim();
           if (q.length < 5 || (trivialSkip && trivialSkip.test(q))) return undefined;
@@ -1106,7 +1123,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
                 atlas: !!process.env.CELIUMS_ATLAS_API_KEY,
                 ai: !!process.env.CELIUMS_LLM_API_KEY,
               },
-              agentId: hookCtx?.agentId ?? event.agentId ?? cfg.agentId,
+              agentId: resolveAgentId([hookCtx?.agentId, event.agentId], cfg.agentId),
               sessionId: hookCtx?.sessionId ?? hookCtx?.sessionKey,
               conversationId: hookCtx?.conversationId,
               memoryEngine: engine,
@@ -1140,7 +1157,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             // Cheap: one indexed lookup + one query. Best-effort.
             let parentBriefing = "";
             try {
-              const meAsChildAgent = ctx.agentId ?? event.agentId ?? cfg.agentId;
+              const meAsChildAgent = resolveAgentId([ctx.agentId, event.agentId], cfg.agentId);
               const parentInfo = await lookupParent(pool as never, meAsChildAgent);
               if (parentInfo) {
                 const engine2 = await getEngine();
@@ -1186,18 +1203,22 @@ export function createCognitionPlugin(edition: EditionOptions) {
               return undefined;
             }
           }
-        });
+          },
+          { warn: (m) => api.logger.warn?.(m) },
+        ));
       }
 
       // ── Auto-capture (agent_end → engine.store) ────────────────────────
       if (cfg.autoCapture.enabled) {
         api.on(
           "agent_end",
-          async (
-            event: { success?: boolean; messages?: unknown; agentId?: string },
-            ctx: { sessionKey?: string; sessionId?: string; agentId?: string; conversationId?: string; requester?: { channel?: string; accountId?: string; to?: string; threadId?: string | number } },
-          ) => {
-            if (!gateReady()) return;
+          withShapeValidation(
+            AGENT_END_EVENT,
+            async (
+              event: { success?: boolean; messages?: unknown; agentId?: string },
+              ctx: { sessionKey?: string; sessionId?: string; agentId?: string; conversationId?: string; requester?: { channel?: string; accountId?: string; to?: string; threadId?: string | number } },
+            ) => {
+              if (!gateReady()) return undefined;
             // Remember this agent as the parent-of-record for its
             // current thread, so the next subagent_spawning fired from
             // the same thread can identify us as the parent. The SDK
@@ -1207,7 +1228,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             if (tKey) {
               rememberParentForThread(
                 tKey,
-                ctx?.agentId ?? event.agentId ?? cfg.agentId,
+                resolveAgentId([ctx?.agentId, event.agentId], cfg.agentId),
                 ctx?.sessionId,
                 ctx?.conversationId,
               );
@@ -1221,7 +1242,10 @@ export function createCognitionPlugin(edition: EditionOptions) {
             } catch (err) {
               api.logger.warn?.(`celiums-cognition: auto-capture failed: ${String(err)}`);
             }
-          },
+            return undefined;
+            },
+            { warn: (m) => api.logger.warn?.(m) },
+          ),
         );
       }
 
@@ -1249,6 +1273,20 @@ export function createCognitionPlugin(edition: EditionOptions) {
         autoJournalThrottle.set(agentId, hits);
         return true;
       };
+      // Audit P1 #11: without periodic eviction the Map grows unbounded
+      // (every unique agent_id ever seen — ephemeral subagent UUIDs in
+      // particular — stays as an empty-array zombie forever). Sweep
+      // every 10 minutes; drop entries with no hits inside the window.
+      const autoJournalSweep = setInterval(() => {
+        const now = Date.now();
+        const cutoff = now - AUTO_JOURNAL_WINDOW_MS;
+        for (const [k, hits] of autoJournalThrottle) {
+          const fresh = hits.filter((t) => t > cutoff);
+          if (fresh.length === 0) autoJournalThrottle.delete(k);
+          else if (fresh.length !== hits.length) autoJournalThrottle.set(k, fresh);
+        }
+      }, 10 * 60 * 1000);
+      autoJournalSweep.unref?.();
 
       // ── Auto-journal (agent_end → agent_journal) ───────────────────────
       // Mario's call (2026-05-20): the journal can't be left as a manual
@@ -1266,16 +1304,18 @@ export function createCognitionPlugin(edition: EditionOptions) {
       if (cfg.journal.enabled && cfg.journal.autoWrite.enabled) {
         api.on(
           "agent_end",
-          async (
-            event: {
-              success?: boolean;
-              messages?: unknown;
-              prompt?: string;
-              agentId?: string;
-            },
-            ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
-          ) => {
-            if (!gateReady()) return;
+          withShapeValidation(
+            AGENT_END_EVENT,
+            async (
+              event: {
+                success?: boolean;
+                messages?: unknown;
+                prompt?: string;
+                agentId?: string;
+              },
+              ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
+            ) => {
+              if (!gateReady()) return undefined;
             const userText = latestUserText(event.messages) ?? event.prompt ?? "";
             const assistantText = latestAssistantText(event.messages) ?? "";
             const toolCalls = countToolCalls(event.messages);
@@ -1286,7 +1326,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             // Per-agent flood guard (S-017): cap auto-journal writes at
             // 30 per 5 minutes per agent_id. Operator's deliberate
             // `journal_write` calls are unaffected.
-            const journalAgentId = ctx?.agentId ?? event.agentId ?? cfg.agentId;
+            const journalAgentId = resolveAgentId([ctx?.agentId, event.agentId], cfg.agentId);
             if (!autoJournalShouldFire(journalAgentId)) {
               api.logger.warn?.(
                 `celiums-cognition: auto-journal throttled for agent=${journalAgentId}`,
@@ -1326,10 +1366,10 @@ export function createCognitionPlugin(edition: EditionOptions) {
                   content,
                   valence,
                   valence_reason: event.success === false ? "agent turn ended with success=false" : "agent turn closed",
-                  tags: ["auto", "agent_end", ...(toolCalls > 0 ? ["with-tools"] : [])],
+                  tags: [TAG_AUTO, TAG_AGENT_END, ...(toolCalls > 0 ? [TAG_WITH_TOOLS] : [])],
                   visibility: "self",
                   conversation_id: ctx.sessionId ?? ctx.sessionKey,
-                  agent_id: ctx.agentId ?? event.agentId ?? cfg.agentId,
+                  agent_id: resolveAgentId([ctx.agentId, event.agentId], cfg.agentId),
                 },
                 {
                   userId,
@@ -1339,7 +1379,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
                     atlas: false,
                     ai: false,
                   },
-                  agentId: ctx.agentId ?? event.agentId ?? cfg.agentId,
+                  agentId: resolveAgentId([ctx.agentId, event.agentId], cfg.agentId),
                   sessionId: ctx.sessionId ?? ctx.sessionKey,
                   pool,
                 } as never,
@@ -1350,7 +1390,10 @@ export function createCognitionPlugin(edition: EditionOptions) {
                 `celiums-cognition: auto-journal failed: ${err instanceof Error ? err.message : String(err)}`,
               );
             }
-          },
+            return undefined;
+            },
+            { warn: (m) => api.logger.warn?.(m) },
+          ),
         );
       }
 
@@ -1406,7 +1449,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             const v = judge(event.prompt);
             if (!v.block) return undefined;
             api.logger.info(
-              `celiums-cognition: ethics block · before_agent_run · category=${v.category} · source=${v.source} · agent=${hookCtx?.agentId ?? cfg.agentId}`,
+              `celiums-cognition: ethics block · before_agent_run · category=${v.category} · source=${v.source} · agent=${resolveAgentId([hookCtx?.agentId], cfg.agentId)}`,
             );
             return {
               outcome: "block" as const,
@@ -1427,7 +1470,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             const v = judge(probe);
             if (!v.block) return undefined;
             api.logger.info(
-              `celiums-cognition: ethics block · before_tool_call · tool=${event.toolName} · category=${v.category} · source=${v.source} · agent=${hookCtx?.agentId ?? cfg.agentId}`,
+              `celiums-cognition: ethics block · before_tool_call · tool=${event.toolName} · category=${v.category} · source=${v.source} · agent=${resolveAgentId([hookCtx?.agentId], cfg.agentId)}`,
             );
             return {
               block: true as const,
@@ -1540,7 +1583,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
         extractPool: extractEnginePool as never,
         userId,
         agentId: cfg.agentId,
-        ethicsMode: (cfg as { ethics?: { mode?: string } }).ethics?.mode ?? "radar",
+        ethicsMode: deriveEthicsMode(cfg),
         logger: {
           info: (m: string) => api.logger.info(m),
           warn: (m: string) => api.logger.warn?.(m),
@@ -1686,7 +1729,9 @@ export function createCognitionPlugin(edition: EditionOptions) {
         },
         stop: () => {
           ready = false;
-          api.logger.info(`${edition.id}: stopped (readiness gate closed)`);
+          clearInterval(autoJournalSweep);
+          autoJournalThrottle.clear();
+          api.logger.info(`${edition.id}: stopped (readiness gate closed, throttle cleared)`);
         },
       });
 
@@ -1726,7 +1771,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             },
             installedAt: process.env.CELIUMS_PLUGIN_INSTALLED_AT,
             agentId: cfg.agentId,
-            ethicsMode: (cfg as { ethics?: { mode?: string } }).ethics?.mode ?? "radar",
+            ethicsMode: deriveEthicsMode(cfg),
             inboxEnqueue: inboxEnqueueRef.current,
             logger: {
               info: (m: string) => api.logger.info(`${edition.id}: ui: ${m}`),
