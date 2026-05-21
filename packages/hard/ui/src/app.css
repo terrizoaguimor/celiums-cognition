@@ -1117,9 +1117,16 @@ body {
   top: 0; right: 0;
   width: min(760px, 92vw);
   height: 100vh;
-  background: var(--c-glass-strong);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  /* Solid surface, not glass. Mario 2026-05-21 (image #4): even at
+   * 0.99 alpha the `backdrop-filter: blur(14px) saturate(160%)` was
+   * smearing the bright-green importance chips and status dots from
+   * the Memories/Journal list rows across the drawer body. The blur
+   * was working harder than the small bit of leaked color justified.
+   * Surface bg + box-shadow keeps the layered "modal over page" feel
+   * without competing with the drawer's own text. Smaller modals
+   * (command palette, user menu) still use the glass token because
+   * they overlay simpler backgrounds. */
+  background: var(--c-surface);
   /* Flat 1px green-tinted left border — `border-image` with a gradient
    * was producing a visual gap between the drawer and the right
    * viewport edge (the implicit unset border-right received some of
