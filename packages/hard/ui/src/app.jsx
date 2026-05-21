@@ -144,6 +144,15 @@ export function App() {
     document.title = `${titles[route]} · Celiums Cognition`;
   }, [route, authState]);
 
+  // ── motion (hooks MUST run on every render — keep above any
+  //     conditional early-return; React's rules-of-hooks tripwire) ──
+  // Lenis is keyed on `enabled` so the smooth-scroll instance is only
+  // bound after the operator authenticates; the hook itself always
+  // runs (cleanup branch when disabled).
+  useLenis(enabled ? "main.celiums-scroll" : null);
+  const routeRef = useRef(null);
+  usePageTransition(routeRef, [route, authState]);
+
   // ── render ──
 
   if (authState === "bootstrapping") {
@@ -179,14 +188,6 @@ export function App() {
     await refreshAuth();
   };
   const toggleTheme = () => setTweak("theme", values.theme === "dark" ? "light" : "dark");
-
-  // Smooth scroll on the main content area (Lenis) — only when
-  // authenticated so it doesn't fight the auth-screen layout.
-  useLenis("main.celiums-scroll");
-
-  // Cross-fade the content well on every route change.
-  const routeRef = useRef(null);
-  usePageTransition(routeRef, [route]);
 
   return (
     <>

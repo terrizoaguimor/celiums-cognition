@@ -22,10 +22,15 @@ import Lenis from "lenis";
 export function useLenis(targetSelector) {
   const lenisRef = useRef(null);
   useEffect(() => {
-    const el = targetSelector ? document.querySelector(targetSelector) : null;
+    // Caller can pass null to skip mounting (e.g. before the operator
+    // authenticates — the auth screen has its own layout and we don't
+    // want lenis grabbing window scroll).
+    if (!targetSelector) return undefined;
+    const el = document.querySelector(targetSelector);
+    if (!el) return undefined;
     const lenis = new Lenis({
-      wrapper: el ?? undefined,
-      content: el?.firstElementChild ?? undefined,
+      wrapper: el,
+      content: el.firstElementChild ?? undefined,
       duration: 0.9,            // a touch faster than default (1.2)
       easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
       smoothWheel: true,
