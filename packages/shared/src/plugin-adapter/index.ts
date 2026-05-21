@@ -63,7 +63,17 @@ import {
   withShapeValidation,
   SUBAGENT_SPAWN_BASE_EVENT,
   SUBAGENT_ENDED_EVENT,
+  SESSION_START_EVENT,
+  SESSION_END_EVENT,
 } from "../sdk-contracts.js";
+import {
+  rememberSessionStart,
+  consumeSessionEnd,
+  composeSessionEndSummary,
+  emitSessionJournal,
+  DEFAULT_SESSION_CONFIG,
+  type SessionConfig,
+} from "./sessions.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -669,6 +679,148 @@ export function createCognitionPlugin(edition: EditionOptions) {
             } catch (err) {
               api.logger.warn?.(
                 `celiums-cognition: subagent_ended handler error: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              return undefined;
+            }
+          },
+          { warn: (m) => api.logger.warn?.(m) },
+        ),
+      );
+
+      // ── Fase C: session lifecycle ──────────────────────────────────────
+      // Two hooks: session_start (open a conversation thread, optionally
+      // resumed) and session_end (close it with a deterministic summary).
+      // Boundaries make weeks-back paging through the journal navigable
+      // — without them the feed is one continuous stream with no anchors.
+      //
+      // Doctrine citations:
+      //   - P1: composable section helpers (sessions.ts owns its own surface)
+      //   - M4: end summary cites scan caps + how to retrieve the rest
+      //   - G1: hooks return typed results; failures degrade to log
+      //   - L2: openSessions tracker has a single cleanup path (_resetSessionTracker)
+      //
+      // The journal entries land scoped to `conversation_id = sessionId`
+      // so /journal/recent?conversation_id=… already groups them; no UI
+      // change is required to make sessions navigable.
+      const sessionCfg: SessionConfig = DEFAULT_SESSION_CONFIG;
+
+      // (1) session_start — anchor entry + remember in-memory.
+      // We emit a lightweight `reflection` so the operator paging back
+      // sees an explicit "session opened" line. The remember() call is
+      // what lets session_end compute a real duration when the SDK
+      // doesn't supply durationMs.
+      api.on(
+        "session_start",
+        withShapeValidation(
+          SESSION_START_EVENT,
+          async (
+            event: { sessionId: string; sessionKey?: string; resumedFrom?: string },
+            hookCtx: { agentId?: string; sessionId?: string; sessionKey?: string },
+          ) => {
+            try {
+              const engine = await getEngine();
+              const pool = extractEnginePool(engine);
+              if (!pool) return undefined;
+              const effectiveAgent = hookCtx?.agentId ?? cfg.agentId;
+              rememberSessionStart(
+                event.sessionId,
+                effectiveAgent,
+                event.resumedFrom,
+                event.sessionId,
+                sessionCfg,
+              );
+              const content = event.resumedFrom
+                ? `Session opened; continuation of \`${event.resumedFrom.slice(0, 12)}…\`.`
+                : `Session opened.`;
+              const tags = event.resumedFrom
+                ? ["session-start", `resumed-from:${event.resumedFrom.slice(0, 12)}`]
+                : ["session-start"];
+              await emitSessionJournal({
+                pool: pool as never,
+                userId,
+                agentId: effectiveAgent,
+                entryType: "reflection",
+                content,
+                valence: 0.05,
+                valenceReason: "fresh session — no signal yet",
+                tags,
+                conversationId: event.sessionId,
+              });
+              api.logger.info(
+                `celiums-cognition: session_start · ${event.sessionId.slice(0, 12)}… · agent=${effectiveAgent}` +
+                (event.resumedFrom ? ` · resumed-from=${event.resumedFrom.slice(0, 12)}…` : ""),
+              );
+              return undefined;
+            } catch (err) {
+              api.logger.warn?.(
+                `celiums-cognition: session_start handler error: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              return undefined;
+            }
+          },
+          { warn: (m) => api.logger.warn?.(m) },
+        ),
+      );
+
+      // (2) session_end — arc entry with deterministic summary.
+      // Pulls counts from agent_journal + agent_lineage where
+      // conversation_id matches; M4 truncation is automatic.
+      api.on(
+        "session_end",
+        withShapeValidation(
+          SESSION_END_EVENT,
+          async (
+            event: {
+              sessionId: string;
+              sessionKey?: string;
+              messageCount: number;
+              durationMs?: number;
+              reason?: string;
+              sessionFile?: string;
+              transcriptArchived?: boolean;
+              nextSessionId?: string;
+              nextSessionKey?: string;
+            },
+            hookCtx: { agentId?: string; sessionId?: string; sessionKey?: string },
+          ) => {
+            try {
+              const engine = await getEngine();
+              const pool = extractEnginePool(engine);
+              if (!pool) return undefined;
+              const tracked = consumeSessionEnd(event.sessionId);
+              const effectiveAgent = tracked?.agentId ?? hookCtx?.agentId ?? cfg.agentId;
+              const reasonStr = event.reason ?? "unknown";
+              const summary = await composeSessionEndSummary({
+                pool: pool as never,
+                sessionId: event.sessionId,
+                agentId: effectiveAgent,
+                reason: reasonStr,
+                durationMs: event.durationMs,
+                messageCount: event.messageCount,
+                startedAt: tracked?.startedAt,
+                resumedFrom: tracked?.resumedFrom,
+                nextSessionId: event.nextSessionId,
+                cfg: sessionCfg,
+              });
+              await emitSessionJournal({
+                pool: pool as never,
+                userId,
+                agentId: effectiveAgent,
+                entryType: "arc",
+                content: summary.text,
+                valence: 0,
+                valenceReason: "session boundary — neutral closing arc",
+                tags: ["session-end", `reason:${reasonStr}`],
+                conversationId: event.sessionId,
+              });
+              api.logger.info(
+                `celiums-cognition: session_end · ${event.sessionId.slice(0, 12)}… · ` +
+                `reason=${reasonStr} · scanned=${summary.scanned}${summary.truncated ? " (capped)" : ""}`,
+              );
+              return undefined;
+            } catch (err) {
+              api.logger.warn?.(
+                `celiums-cognition: session_end handler error: ${err instanceof Error ? err.message : String(err)}`,
               );
               return undefined;
             }

@@ -116,6 +116,40 @@ export const SUBAGENT_ENDED_EVENT: ShapeSpec = {
   ],
 } as const;
 
+/** PluginHookSessionStartEvent — Fase C.
+ *  Verified against hook-types-CaX_Eg5O.d.ts:586-590. */
+export const SESSION_START_EVENT: ShapeSpec = {
+  name: "session_start/event",
+  versionTag: "openclaw@2026.5.19-beta.1",
+  fields: [
+    { path: "sessionId", type: "string", required: true },
+    { path: "sessionKey", type: "string", required: false },
+    { path: "resumedFrom", type: "string", required: false },
+  ],
+} as const;
+
+/** PluginHookSessionEndEvent — Fase C.
+ *  Verified against hook-types-CaX_Eg5O.d.ts:592-602. The `reason` enum
+ *  matches PluginHookSessionEndReason exactly so a future enum addition
+ *  surfaces as drift before it silently passes through. */
+export const SESSION_END_EVENT: ShapeSpec = {
+  name: "session_end/event",
+  versionTag: "openclaw@2026.5.19-beta.1",
+  fields: [
+    { path: "sessionId", type: "string", required: true },
+    { path: "sessionKey", type: "string", required: false },
+    { path: "messageCount", type: "number", required: true },
+    { path: "durationMs", type: "number", required: false },
+    { path: "reason", type: "string", required: false,
+      oneOf: ["new", "reset", "idle", "daily", "compaction",
+              "deleted", "shutdown", "restart", "unknown"] },
+    { path: "sessionFile", type: "string", required: false },
+    { path: "transcriptArchived", type: "boolean", required: false },
+    { path: "nextSessionId", type: "string", required: false },
+    { path: "nextSessionKey", type: "string", required: false },
+  ],
+} as const;
+
 /** PluginHookBeforeCompactionEvent — Fase A. */
 export const BEFORE_COMPACTION_EVENT: ShapeSpec = {
   name: "before_compaction/event",
