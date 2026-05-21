@@ -724,6 +724,93 @@ async function journalAgents(
   }
 }
 
+/** GET /api/celiums-cognition/journal/lineage
+ *  Parent ↔ subagent edges recorded by Fase B's three hooks
+ *  (subagent_spawning / subagent_spawned / subagent_ended) into
+ *  `agent_lineage`. With `?agent_id=X` returns the subgraph that
+ *  contains X — both ancestry (who spawned X, transitively) and
+ *  descendants (what X spawned, transitively) — capped at 10 rungs
+ *  in either direction so a corrupted cycle cannot run away. Without
+ *  the param, returns the most-recent 500 edges across the gateway.
+ *
+ *  Empty edge list with `schema: "missing"` is returned when migration
+ *  014 has not yet been applied (older gateways), so the UI can degrade
+ *  to "no lineage data" instead of surfacing a SQL error. */
+async function journalLineage(
+  ctx: UiRouterContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const focus = parseQuery(req).get("agent_id")?.trim() ?? "";
+  try {
+    const exists = await ctx.pool.query(
+      `SELECT to_regclass('public.agent_lineage') AS r`,
+    );
+    if (!exists.rows[0]?.r) {
+      return sendJson(res, 200, {
+        edges: [],
+        focus: focus || null,
+        schema: "missing",
+      });
+    }
+    let rows;
+    if (focus) {
+      const r = await ctx.pool.query(
+        `WITH RECURSIVE
+           ancestors AS (
+             SELECT l.*, 0 AS rung
+               FROM agent_lineage l
+              WHERE l.child_agent_id = $1
+             UNION
+             SELECT l.*, a.rung + 1
+               FROM agent_lineage l
+               JOIN ancestors a ON l.child_agent_id = a.parent_agent_id
+              WHERE a.rung < 10
+           ),
+           descendants AS (
+             SELECT l.*, 0 AS rung
+               FROM agent_lineage l
+              WHERE l.parent_agent_id = $1
+             UNION
+             SELECT l.*, d.rung + 1
+               FROM agent_lineage l
+               JOIN descendants d ON l.parent_agent_id = d.child_agent_id
+              WHERE d.rung < 10
+           )
+         SELECT DISTINCT id, parent_agent_id, child_agent_id, child_session_key,
+                conversation_id, task_label, mode, depth, spawned_at, ended_at,
+                end_outcome, end_summary
+           FROM (
+             SELECT * FROM ancestors
+             UNION
+             SELECT * FROM descendants
+           ) all_edges
+          ORDER BY spawned_at DESC
+          LIMIT 500`,
+        [focus],
+      );
+      rows = r.rows;
+    } else {
+      const r = await ctx.pool.query(
+        `SELECT id, parent_agent_id, child_agent_id, child_session_key,
+                conversation_id, task_label, mode, depth, spawned_at, ended_at,
+                end_outcome, end_summary
+           FROM agent_lineage
+          ORDER BY spawned_at DESC
+          LIMIT 500`,
+      );
+      rows = r.rows;
+    }
+    sendJson(res, 200, {
+      edges: rows,
+      focus: focus || null,
+      schema: "ready",
+    });
+  } catch (err) {
+    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
+  }
+}
+
 /** GET /api/celiums-cognition/ethics/events
  *  Audit-log entries from the ethics pipeline. ?decision=block|flag|allow|all
  *  ?law=1|2|3 (Three Laws) optional. */
@@ -1216,6 +1303,7 @@ export interface UiRoutes {
   memoriesList: UiRouteHandler;
   journalRecent: UiRouteHandler;
   journalAgents: UiRouteHandler;
+  journalLineage: UiRouteHandler;
   ethicsEvents: UiRouteHandler;
   activitySparklines: UiRouteHandler;
   activityRecent: UiRouteHandler;
@@ -1246,6 +1334,8 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
       journalRecent(ctx, req, res),
     journalAgents: (req: IncomingMessage, res: ServerResponse) =>
       journalAgents(ctx, req, res),
+    journalLineage: (req: IncomingMessage, res: ServerResponse) =>
+      journalLineage(ctx, req, res),
     ethicsEvents: (req: IncomingMessage, res: ServerResponse) =>
       ethicsEvents(ctx, req, res),
     activitySparklines: (req: IncomingMessage, res: ServerResponse) =>
@@ -1334,6 +1424,7 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
     if (p === "/memories") return h.memoriesList(req, res);
     if (p === "/journal/recent") return h.journalRecent(req, res);
     if (p === "/journal/agents") return h.journalAgents(req, res);
+    if (p === "/journal/lineage") return h.journalLineage(req, res);
     if (p === "/ethics/events") return h.ethicsEvents(req, res);
     if (p === "/activity/sparklines") return h.activitySparklines(req, res);
     if (p === "/activity/recent") return h.activityRecent(req, res);

@@ -3,7 +3,7 @@
  * Licensed under the Apache License, Version 2.0
  */
 import React, { useState, useMemo, useEffect } from "react";
-import { fetchJournal, fetchJournalAgents, fetchCounts, useQuery } from "./data.js";
+import { fetchJournal, fetchJournalAgents, fetchJournalLineage, fetchCounts, useQuery } from "./data.js";
 import { Ico } from "./celiums-primitives.jsx";
 import { Drawer, PageHead, SectionCard, StatusDot, HelpPopover, fmtCount } from "./cc-shell.jsx";
 
@@ -21,9 +21,22 @@ export function Journal({ showToast }) {
   const agentsQ = useQuery(fetchJournalAgents, []);
   const allAgents = agentsQ.data?.agents ?? [];
 
+  // Subagent lineage edges (Fase B) — drives sidebar indent + drawer.
+  const lineageQ = useQuery(() => fetchJournalLineage(), []);
+  const lineageData = useMemo(
+    () => buildLineageMap(lineageQ.data?.edges ?? []),
+    [lineageQ.data],
+  );
+  const flatAgents = useMemo(
+    () => flattenAgents(allAgents, lineageData),
+    [allAgents, lineageData],
+  );
+
   // Selected entry for the detail drawer (Mario 2026-05-21: click should
   // open the full entry, not just stare at a truncated preview).
   const [selectedEntry, setSelectedEntry] = useState(null);
+  // Lineage drawer focus — set by "Open subagent chain" buttons.
+  const [lineageFocus, setLineageFocus] = useState(null);
 
   // Auto-pick the most-recent agent if "all" returns too noisy a mix;
   // operator can switch back via the sidebar.
@@ -135,12 +148,15 @@ export function Journal({ showToast }) {
                   No agents have written yet.
                 </div>
               )}
-              {allAgents.map((a) => (
+              {flatAgents.map(({ agent, depth, isInLineage }) => (
                 <AgentRow
-                  key={a.agent_id}
-                  agent={a}
-                  active={agentFilter === a.agent_id}
-                  onClick={() => setAgentFilter(a.agent_id)}
+                  key={agent.agent_id}
+                  agent={agent}
+                  active={agentFilter === agent.agent_id}
+                  onClick={() => setAgentFilter(agent.agent_id)}
+                  depth={depth}
+                  isInLineage={isInLineage}
+                  onOpenLineage={() => setLineageFocus(agent.agent_id)}
                 />
               ))}
             </div>
@@ -263,6 +279,21 @@ export function Journal({ showToast }) {
       <JournalEntryDrawer
         entry={selectedEntry}
         onClose={() => setSelectedEntry(null)}
+        showToast={showToast}
+        onOpenLineage={(agentId) => {
+          setSelectedEntry(null);
+          setLineageFocus(agentId);
+        }} />
+
+      <LineageDrawer
+        focus={lineageFocus}
+        edges={lineageQ.data?.edges ?? []}
+        schemaState={lineageQ.data?.schema ?? "ready"}
+        onClose={() => setLineageFocus(null)}
+        onFocusAgent={(agentId) => {
+          setLineageFocus(null);
+          setAgentFilter(agentId);
+        }}
         showToast={showToast} />
     </>
   );
@@ -323,10 +354,12 @@ export function JournalEntry({ e, showToast, onClick, selected }) {
  * chain hint). When clicked from the feed, the operator can scan the
  * full body, copy parts, and verify the hash chain link to the previous
  * entry without leaving the tab. */
-export function JournalEntryDrawer({ entry, onClose, showToast }) {
+export function JournalEntryDrawer({ entry, onClose, showToast, onOpenLineage }) {
   if (!entry) return <Drawer open={false} onClose={onClose} />;
   const valence = Number(entry.valence ?? 0);
   const importance = Number(entry.importance ?? 0);
+  const lineageEntry = isLineageEntry(entry);
+  const lineagePivot = lineageFocusFor(entry) ?? entry.agent_id;
   return (
     <Drawer open={true} onClose={onClose}>
       <div className="cc-drawer-head">
@@ -421,14 +454,23 @@ export function JournalEntryDrawer({ entry, onClose, showToast }) {
         }}>
           <Ico.copy width={13} height={13} /> Copy JSON
         </button>
+        {lineageEntry && onOpenLineage && (
+          <button className="celiums-btn" onClick={() => onOpenLineage(lineagePivot)}>
+            ⛓ Open subagent chain
+          </button>
+        )}
         <button className="celiums-btn ghost" style={{ marginLeft: "auto" }} onClick={onClose}>Close</button>
       </div>
     </Drawer>
   );
 }
 
-/* Sidebar row for one agent — name, entry count, last-written, valence tint. */
-function AgentRow({ agent, active, onClick, isAll }) {
+/* Sidebar row for one agent — name, entry count, last-written, valence tint.
+ * `depth` indents children of subagent spawns (Fase B lineage); a small
+ * elbow glyph "└" plus a left-padding rule signal hierarchy without taking
+ * an extra column. `isInLineage` reveals a tiny chain icon to the right
+ * that opens the lineage drawer at this agent as focus. */
+function AgentRow({ agent, active, onClick, isAll, depth = 0, isInLineage, onOpenLineage }) {
   const total = Number(agent.total ?? 0);
   const valence = Number(agent.avg_valence ?? 0);
   // Border tint based on whether the agent's average valence skews
@@ -439,16 +481,24 @@ function AgentRow({ agent, active, onClick, isAll }) {
         ? "var(--c-green)"
         : "var(--c-amber-text)"
       : "transparent";
+  const indent = depth > 0 ? 14 + depth * 14 : 14;
   return (
     <button
       type="button"
       onClick={onClick}
       style={{
-        display: "flex", width: "100%", alignItems: "center", gap: 8,
-        padding: "8px 14px", border: 0, background: active ? "var(--c-hover)" : "transparent",
+        display: "flex", width: "100%", alignItems: "center", gap: 6,
+        padding: `8px 14px 8px ${indent}px`,
+        border: 0, background: active ? "var(--c-hover)" : "transparent",
         cursor: "pointer", textAlign: "left", fontFamily: "inherit",
         borderLeft: `3px solid ${active ? "var(--c-green)" : valenceTint}`,
       }}>
+      {depth > 0 && (
+        <span style={{
+          fontFamily: "var(--font-mono)", fontSize: 11,
+          color: "var(--c-fg-faint)", flexShrink: 0, marginRight: 2,
+        }}>└</span>
+      )}
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{
           fontSize: 12.5, color: "var(--c-fg)", fontWeight: active ? 500 : 400,
@@ -466,12 +516,268 @@ function AgentRow({ agent, active, onClick, isAll }) {
           </div>
         )}
       </div>
+      {isInLineage && onOpenLineage && (
+        <span
+          role="button"
+          title="Open subagent chain"
+          onClick={(ev) => { ev.stopPropagation(); onOpenLineage(); }}
+          style={{
+            fontFamily: "var(--font-mono)", fontSize: 11,
+            color: "var(--c-fg-muted)", padding: "1px 5px", marginRight: 2,
+            background: "var(--c-surface-2)", borderRadius: 4,
+            cursor: "pointer",
+          }}>⛓</span>
+      )}
       <span style={{
         fontFamily: "var(--font-mono)", fontSize: 11,
         color: "var(--c-fg-muted)", padding: "1px 6px",
         background: "var(--c-surface-2)", borderRadius: 4,
       }}>{total}</span>
     </button>
+  );
+}
+
+/* Build a lineage map from edge rows. Returns:
+ *   parentToChildren: Map<parent_agent_id, edge[]>
+ *   childToParents:   Map<child_agent_id, edge[]>
+ *   touched:          Set<agent_id>
+ * Used by flattenAgents (sidebar indent) and LineageDrawer (chain rendering). */
+function buildLineageMap(edges) {
+  const p2c = new Map();
+  const c2p = new Map();
+  const touched = new Set();
+  for (const e of edges ?? []) {
+    if (!e.parent_agent_id || !e.child_agent_id) continue;
+    touched.add(e.parent_agent_id);
+    touched.add(e.child_agent_id);
+    if (!p2c.has(e.parent_agent_id)) p2c.set(e.parent_agent_id, []);
+    p2c.get(e.parent_agent_id).push(e);
+    if (!c2p.has(e.child_agent_id)) c2p.set(e.child_agent_id, []);
+    c2p.get(e.child_agent_id).push(e);
+  }
+  return { parentToChildren: p2c, childToParents: c2p, touched };
+}
+
+/* Order agents for the sidebar so children render under their parent.
+ *   - Lineage roots (agents that spawned at least one child and were
+ *     never spawned themselves) sort first, by last activity.
+ *   - DFS into children, ordered by spawned_at desc within a parent.
+ *   - Standalone agents (untouched by lineage) come last in original
+ *     /journal/agents order so the existing experience is unchanged
+ *     for gateways without subagents.
+ * Cycles are avoided by a `seen` set — depth is the FIRST depth at
+ * which the agent appears, which is the shortest path from any root. */
+function flattenAgents(agents, lineage) {
+  const byId = new Map((agents ?? []).map((a) => [a.agent_id, a]));
+  const { parentToChildren, childToParents, touched } = lineage;
+  const out = [];
+  const seen = new Set();
+
+  function emit(agentId, depth) {
+    if (seen.has(agentId)) return;
+    seen.add(agentId);
+    const a = byId.get(agentId) ?? { agent_id: agentId, total: 0 };
+    out.push({ agent: a, depth, isInLineage: touched.has(agentId) });
+    const edges = parentToChildren.get(agentId) ?? [];
+    const sorted = [...edges].sort(
+      (x, y) => (y.spawned_at || "").localeCompare(x.spawned_at || ""),
+    );
+    const childIds = [];
+    const childSeen = new Set();
+    for (const e of sorted) {
+      if (childSeen.has(e.child_agent_id)) continue;
+      childSeen.add(e.child_agent_id);
+      childIds.push(e.child_agent_id);
+    }
+    for (const cid of childIds) emit(cid, depth + 1);
+  }
+
+  const lineageRoots = [...touched].filter((id) => !childToParents.has(id));
+  const rootKey = (id) => {
+    const a = byId.get(id);
+    if (a?.last_written_at) return a.last_written_at;
+    const firstSpawn = parentToChildren.get(id)?.[0]?.spawned_at;
+    return firstSpawn ?? "";
+  };
+  lineageRoots.sort((a, b) => rootKey(b).localeCompare(rootKey(a)));
+  for (const r of lineageRoots) emit(r, 0);
+  for (const a of agents ?? []) {
+    if (!touched.has(a.agent_id)) emit(a.agent_id, 0);
+  }
+  return out;
+}
+
+/* True when an entry was emitted by the Fase B subagent hooks
+ * (spawn decision, refusal, child closing arc, or parent retrospective)
+ * — used by the entry drawer to surface a "Open subagent chain" button. */
+export function isLineageEntry(entry) {
+  const tags = entry?.tags ?? [];
+  for (const t of tags) {
+    if (typeof t !== "string") continue;
+    if (t === "subagent-refused" || t === "spawned-subagent" || t === "subagent") return true;
+    if (t.startsWith("from-subagent:")) return true;
+  }
+  return false;
+}
+
+/* Pull the "other party" agent_id out of a lineage entry so the drawer
+ * opens with the relevant focus. Returns null when none can be inferred
+ * (the caller falls back to the entry's own agent_id). */
+function lineageFocusFor(entry) {
+  const tags = entry?.tags ?? [];
+  for (const t of tags) {
+    if (typeof t !== "string") continue;
+    if (t.startsWith("from-subagent:")) return t.slice("from-subagent:".length);
+  }
+  // For parent's spawn decision, tag[1] is the child agent_id
+  // (see plugin-adapter/index.ts:529). Use it when present.
+  if (tags.includes("spawned-subagent")) {
+    const idx = tags.indexOf("spawned-subagent");
+    const next = tags[idx + 1];
+    if (typeof next === "string" && next.length > 0) return next;
+  }
+  return null;
+}
+
+/* Drawer that renders the parent ↔ children chain around `focus`.
+ * Groups edges by direction relative to focus: "spawned by" (focus is
+ * the child) at the top, then "spawned" (focus is the parent) below.
+ * Clicking a row pivots the journal feed to that agent_id. */
+function LineageDrawer({ focus, edges, schemaState, onClose, onFocusAgent, showToast }) {
+  if (!focus) return <Drawer open={false} onClose={onClose} />;
+  const rel = edgesAround(focus, edges);
+  return (
+    <Drawer open={true} onClose={onClose}>
+      <div className="cc-drawer-head">
+        <div style={{
+          width: 44, height: 44, borderRadius: 10,
+          background: "var(--c-surface-2)", border: "1px solid var(--c-divider)",
+          display: "grid", placeItems: "center", color: "var(--c-fg-muted)",
+          fontSize: 18, flexShrink: 0,
+        }}>⛓</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2>Subagent chain</h2>
+          <div className="slug" style={{ cursor: "pointer", fontFamily: "var(--font-mono)" }}
+            onClick={() => { navigator.clipboard?.writeText(focus); showToast?.("Agent id copied"); }}>
+            focus · {focus}
+          </div>
+        </div>
+        <button className="cc-icon-btn" onClick={onClose}><Ico.x width={14} height={14} /></button>
+      </div>
+
+      <div className="cc-drawer-meta">
+        <span className="celiums-chip">{rel.parents.length} parents</span>
+        <span className="celiums-chip">{rel.children.length} children</span>
+        {schemaState === "missing" && (
+          <span className="celiums-chip amber">migration 014 not applied</span>
+        )}
+      </div>
+
+      <div className="cc-drawer-body">
+        {schemaState === "missing" && (
+          <p style={{ fontSize: 12.5, color: "var(--c-fg-muted)" }}>
+            <code>agent_lineage</code> table is missing on this gateway.
+            Apply migration 014 (it ships with the plugin) to populate
+            subagent edges.
+          </p>
+        )}
+        {rel.parents.length === 0 && rel.children.length === 0 && schemaState !== "missing" && (
+          <p style={{ fontSize: 12.5, color: "var(--c-fg-muted)" }}>
+            No spawn edges touch <code>{focus}</code>.
+            This agent ran without parent or children on this gateway.
+          </p>
+        )}
+
+        {rel.parents.length > 0 && (
+          <>
+            <h3>Spawned by</h3>
+            {rel.parents.map((e) => (
+              <LineageRow key={e.id} edge={e} side="parent"
+                onFocus={() => onFocusAgent(e.parent_agent_id)} />
+            ))}
+          </>
+        )}
+
+        {rel.children.length > 0 && (
+          <>
+            <h3>Spawned</h3>
+            {rel.children.map((e) => (
+              <LineageRow key={e.id} edge={e} side="child"
+                onFocus={() => onFocusAgent(e.child_agent_id)} />
+            ))}
+          </>
+        )}
+      </div>
+
+      <div className="cc-drawer-foot">
+        <button className="celiums-btn" onClick={() => onFocusAgent(focus)}>
+          View this agent's journal
+        </button>
+        <button className="celiums-btn ghost" style={{ marginLeft: "auto" }} onClick={onClose}>Close</button>
+      </div>
+    </Drawer>
+  );
+}
+
+function edgesAround(focus, edges) {
+  const parents = [];
+  const children = [];
+  for (const e of edges ?? []) {
+    if (e.child_agent_id === focus) parents.push(e);
+    if (e.parent_agent_id === focus) children.push(e);
+  }
+  const ts = (e) => (e.spawned_at || "").toString();
+  parents.sort((a, b) => ts(b).localeCompare(ts(a)));
+  children.sort((a, b) => ts(b).localeCompare(ts(a)));
+  return { parents, children };
+}
+
+function outcomeChip(outcome) {
+  if (!outcome) return <span className="celiums-chip">running</span>;
+  const tone =
+    outcome === "ok" ? "green" :
+    outcome === "error" ? "red" :
+    "amber";
+  return <span className={`celiums-chip ${tone}`}>{outcome}</span>;
+}
+
+function LineageRow({ edge, side, onFocus }) {
+  const other = side === "parent" ? edge.parent_agent_id : edge.child_agent_id;
+  const summary = edge.end_summary && edge.end_summary.length > 220
+    ? `${edge.end_summary.slice(0, 220)}…`
+    : edge.end_summary;
+  return (
+    <div
+      role="button"
+      onClick={onFocus}
+      style={{
+        padding: "10px 12px", marginBottom: 8, borderRadius: 8,
+        border: "1px solid var(--c-border)", background: "var(--c-surface)",
+        cursor: "pointer",
+      }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <code style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{other}</code>
+        <span className="celiums-chip">depth {edge.depth}</span>
+        <span className="celiums-chip">{edge.mode}</span>
+        {outcomeChip(edge.end_outcome)}
+        <span style={{
+          marginLeft: "auto", fontSize: 11, color: "var(--c-fg-subtle)",
+          fontFamily: "var(--font-mono)",
+        }}>
+          {fmtRelativeShort(edge.spawned_at)}
+        </span>
+      </div>
+      {edge.task_label && (
+        <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--c-fg)" }}>
+          {edge.task_label}
+        </div>
+      )}
+      {summary && (
+        <div style={{ marginTop: 4, fontSize: 12, color: "var(--c-fg-muted)", fontStyle: "italic" }}>
+          {summary}
+        </div>
+      )}
+    </div>
   );
 }
 
