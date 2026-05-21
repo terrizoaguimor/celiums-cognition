@@ -17,9 +17,31 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+
+/** Read the operator's host timezone so the bundled containers boot
+ *  with the same TZ — keeps NOW() and log timestamps consistent with
+ *  what the operator sees on the host. Falls back to UTC when the
+ *  symlink isn't readable (uncommon Linux distros, containers, etc.).
+ *
+ *  /etc/timezone is the IANA name on Debian/Ubuntu; on systemd hosts
+ *  the symlink /etc/localtime → /usr/share/zoneinfo/<IANA> is the
+ *  canonical source. We try /etc/timezone first (cheap read), then
+ *  fall back to resolving the symlink, then UTC. */
+function detectHostTimezone(): string {
+  try {
+    const t = readFileSync("/etc/timezone", "utf8").trim();
+    if (t && /^[A-Z][a-zA-Z_+\-/0-9]+$/.test(t)) return t;
+  } catch { /* fall through */ }
+  try {
+    const link = readlinkSync("/etc/localtime");
+    const m = link.match(/zoneinfo\/(.+)$/);
+    if (m && m[1]) return m[1];
+  } catch { /* fall through */ }
+  return "UTC";
+}
 
 const COMPOSE = join(dirname(fileURLToPath(import.meta.url)), "compose", "docker-compose.yml");
 const CREDS_DIR = join(homedir(), ".celiums-cognition");
@@ -81,12 +103,18 @@ export async function setup(): Promise<number> {
   }
 
   const credsFile = ensureCredentials();
+  const tz = detectHostTimezone();
+  console.log(`[celiums-cognition] Detected host timezone: ${tz} (passed to containers as TZ env).`);
   const composeArgs = [
     "compose",
     "--env-file", credsFile,
     "-f", COMPOSE,
     "up", "-d", "--wait",
   ];
+  // Pass TZ through the parent env so docker compose substitutes
+  // ${TZ:-UTC} in the compose file. The credentials.env already has
+  // POSTGRES_*; we layer TZ on top.
+  process.env.TZ = process.env.TZ ?? tz;
 
   console.log(`[celiums-cognition] Provisioning local stack via ${COMPOSE}`);
   console.log("[celiums-cognition] First run pulls images (~60-90s).");

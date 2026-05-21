@@ -12,6 +12,15 @@
 # initialized with the legacy default — those installs SHOULD rotate
 # via `ALTER USER celiums WITH PASSWORD '...';` and update credentials.env,
 # but this compose still boots them.
+#
+# Timezone (2026-05-21 circadian fix): containers honour the operator's
+# `TZ` env when provided, falling back to `UTC` (Docker default). The
+# limbic engine still reads `user_profiles.timezone_offset` from PG for
+# its own circadian math, so this `TZ` is only for cosmetic correctness
+# of `NOW()` timestamps and log lines inside containers. The bootstrap
+# path (setup.ts / service.start) reads `/etc/timezone` from the host
+# and forwards it as `TZ` so a fresh install matches the operator's
+# locale automatically.
 name: celiums-cognition
 
 services:
@@ -21,6 +30,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-celiums}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-celiums}
       POSTGRES_DB: ${POSTGRES_DB:-celiums_memory}
+      TZ: ${TZ:-UTC}
+      # Apply timezone at server level too — connections inherit it via
+      # `current_setting('TIMEZONE')`. ALTER DATABASE is the persistent
+      # form; this `command` ensures it on first init when no volume
+      # exists yet.
+      PGTZ: ${TZ:-UTC}
     # Bind to loopback only. Docker bypasses iptables INPUT chain, so
     # "5432:5432" would expose Postgres to the public interface even if
     # ufw/firewalld block it. The plugin connects via 127.0.0.1.
@@ -36,6 +51,8 @@ services:
 
   qdrant:
     image: qdrant/qdrant:v1.14.0
+    environment:
+      TZ: ${TZ:-UTC}
     ports:
       - "127.0.0.1:6333:6333"
     volumes:
@@ -49,6 +66,8 @@ services:
   valkey:
     image: valkey/valkey:8
     command: ["valkey-server", "--save", "60", "1"]
+    environment:
+      TZ: ${TZ:-UTC}
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
