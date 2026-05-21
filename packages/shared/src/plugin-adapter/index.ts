@@ -45,6 +45,25 @@ import {
   makeCeliumsCompactionProvider,
   type CompactionProvider,
 } from "./compaction.js";
+import {
+  rememberParentForThread,
+  getCachedParent,
+  insertLineage,
+  closeLineage,
+  shouldRefuseSpawn,
+  composeBriefing,
+  emitJournal,
+  lookupParent,
+  threadKey,
+  DEFAULT_SUBAGENT_CONFIG,
+  type SubagentConfig,
+  type PoolLike,
+} from "./subagent.js";
+import {
+  withShapeValidation,
+  SUBAGENT_SPAWN_BASE_EVENT,
+  SUBAGENT_ENDED_EVENT,
+} from "../sdk-contracts.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -440,6 +459,224 @@ export function createCognitionPlugin(edition: EditionOptions) {
         },
       );
 
+      // ── Fase B: subagent lifecycle ─────────────────────────────────────
+      // Three hooks: spawning (before child arrives), spawned (child
+      // instantiated), ended (child finished). Each handler is wrapped
+      // with withShapeValidation so an SDK shape change downgrades to
+      // skip+warn instead of crashing the agent turn.
+      const subagentCfg: SubagentConfig = DEFAULT_SUBAGENT_CONFIG;
+
+      // (1) subagent_spawning — loop guard + briefing assembly.
+      // We return PluginHookSubagentSpawningResult; { status: "ok", … }
+      // on success, { status: "error", error } to refuse the spawn.
+      api.on(
+        "subagent_spawning",
+        withShapeValidation(
+          SUBAGENT_SPAWN_BASE_EVENT,
+          async (
+            event: {
+              childSessionKey: string;
+              agentId: string;
+              label?: string;
+              mode: "run" | "session";
+              requester?: { channel?: string; accountId?: string; to?: string; threadId?: string | number };
+              threadRequested: boolean;
+            },
+            hookCtx: { agentId?: string; sessionId?: string; sessionKey?: string; conversationId?: string },
+          ) => {
+            try {
+              const engine = await getEngine();
+              const pool = extractEnginePool(engine);
+              if (!pool) return undefined; // pool missing — degrade silently
+              const tKey = threadKey(event.requester, hookCtx?.sessionKey);
+              const parentEntry = getCachedParent(tKey);
+              // Determine parent identity. Falls back to cfg.agentId for
+              // root-level spawns where we can't observe a prior parent.
+              const parentAgentId = parentEntry?.parentAgentId ?? cfg.agentId;
+              // Loop guard: refuse if ancestral depth would exceed max.
+              const guard = await shouldRefuseSpawn({ pool: pool as never, parentAgentId, cfg: subagentCfg });
+              if (guard.refuse) {
+                api.logger.warn?.(
+                  `celiums-cognition: subagent_spawning REFUSED · parent=${parentAgentId} · child=${event.agentId} · ${guard.reason}`,
+                );
+                await emitJournal({
+                  pool: pool as never,
+                  userId,
+                  agentId: parentAgentId,
+                  entryType: "doubt",
+                  content: `Refused to spawn subagent \`${event.agentId}\` for task "${event.label ?? "(unlabeled)"}" — ${guard.reason}.`,
+                  valence: -0.2,
+                  valenceReason: "subagent spawn depth guard",
+                  tags: ["subagent-refused", "loop-guard"],
+                  conversationId: parentEntry?.conversationId,
+                });
+                return { status: "error" as const, error: guard.reason };
+              }
+              // Parent's "I'm delegating" journal entry. The child sees
+              // a related briefing in its first turn_context (composed
+              // live by the before_prompt_build hook below).
+              await emitJournal({
+                pool: pool as never,
+                userId,
+                agentId: parentAgentId,
+                entryType: "decision",
+                content:
+                  `Spawning subagent \`${event.agentId}\` (mode=${event.mode}) ` +
+                  `for: ${event.label ?? "(unlabeled task)"}.` +
+                  (event.requester?.channel ? ` Via channel: ${event.requester.channel}.` : ""),
+                valence: 0.1,
+                valenceReason: "delegating to subagent",
+                tags: ["spawned-subagent", event.agentId],
+                conversationId: parentEntry?.conversationId,
+              });
+              // Insert lineage row early so subagent's before_prompt_build
+              // can look up its parent. ended_at stays NULL.
+              await insertLineage({
+                pool: pool as never,
+                parentAgentId,
+                childAgentId: event.agentId,
+                childSessionKey: event.childSessionKey,
+                conversationId: parentEntry?.conversationId,
+                taskLabel: event.label,
+                mode: event.mode,
+                depth: guard.depth,
+              });
+              api.logger.info(
+                `celiums-cognition: subagent_spawning OK · ${parentAgentId} → ${event.agentId} · depth=${guard.depth}`,
+              );
+              return { status: "ok" as const };
+            } catch (err) {
+              api.logger.warn?.(
+                `celiums-cognition: subagent_spawning handler error: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              return undefined; // let core continue with default routing
+            }
+          },
+          { warn: (m) => api.logger.warn?.(m) },
+        ),
+      );
+
+      // (2) subagent_spawned — child is live, no-op besides log; lineage
+      // already inserted in spawning. Useful as an observability point.
+      api.on(
+        "subagent_spawned",
+        withShapeValidation(
+          SUBAGENT_SPAWN_BASE_EVENT,
+          async (
+            event: { agentId: string; childSessionKey: string },
+            _ctx: unknown,
+          ) => {
+            api.logger.info(
+              `celiums-cognition: subagent_spawned · ${event.agentId} (session=${event.childSessionKey.slice(0, 12)}…)`,
+            );
+            return undefined;
+          },
+          { warn: (m) => api.logger.warn?.(m) },
+        ),
+      );
+
+      // (3) subagent_ended — close lineage row + write retrospective
+      // journal entries on BOTH child (arc closing) and parent (lesson
+      // or reflection summarizing the child's run).
+      api.on(
+        "subagent_ended",
+        withShapeValidation(
+          SUBAGENT_ENDED_EVENT,
+          async (
+            event: {
+              targetSessionKey: string;
+              targetKind: "subagent" | "acp";
+              reason: string;
+              outcome?: "ok" | "error" | "timeout" | "killed" | "reset" | "deleted";
+              error?: string;
+              endedAt?: number;
+            },
+            _ctx: unknown,
+          ) => {
+            if (event.targetKind !== "subagent") return undefined;
+            try {
+              const engine = await getEngine();
+              const pool = extractEnginePool(engine);
+              if (!pool) return undefined;
+              // Find lineage row by session key to recover identities.
+              const { rows: lineRows } = await (pool as PoolLike).query<{
+                parent_agent_id: string;
+                child_agent_id: string;
+                task_label: string | null;
+                conversation_id: string | null;
+              }>(
+                `SELECT parent_agent_id, child_agent_id, task_label, conversation_id::text
+                   FROM agent_lineage
+                  WHERE child_session_key = $1
+                  LIMIT 1`,
+                [event.targetSessionKey],
+              );
+              if (lineRows.length === 0) {
+                api.logger.warn?.(
+                  `celiums-cognition: subagent_ended without prior lineage row · session=${event.targetSessionKey.slice(0, 12)}…`,
+                );
+                return undefined;
+              }
+              const lin = lineRows[0];
+              const outcomeOk = event.outcome === "ok" || event.outcome === undefined;
+              // Child's closing arc — formal end of its chain.
+              await emitJournal({
+                pool: pool as never,
+                userId,
+                agentId: lin.child_agent_id,
+                entryType: "arc",
+                content:
+                  `Session closing. Outcome: ${event.outcome ?? "unspecified"}.` +
+                  (event.reason ? ` Reason: ${event.reason}.` : "") +
+                  (event.error ? ` Error: ${event.error.slice(0, 400)}.` : ""),
+                valence: outcomeOk ? 0.1 : -0.3,
+                valenceReason: `subagent ended with outcome=${event.outcome ?? "unspecified"}`,
+                tags: ["session-end", "subagent"],
+                conversationId: lin.conversation_id ?? undefined,
+              });
+              // Parent's retrospective — lesson on failure paths,
+              // reflection on success. Closes the causal loop with the
+              // spawn decision via shared conversation_id + tags.
+              await emitJournal({
+                pool: pool as never,
+                userId,
+                agentId: lin.parent_agent_id,
+                entryType: outcomeOk ? "reflection" : "lesson",
+                content:
+                  `Subagent \`${lin.child_agent_id}\` ended` +
+                  ` (outcome=${event.outcome ?? "?"})` +
+                  (lin.task_label ? ` after working on: ${lin.task_label}.` : ".") +
+                  (event.error ? ` Error surfaced: ${event.error.slice(0, 200)}.` : "") +
+                  ` See chain agent_id=${lin.child_agent_id}.`,
+                valence: outcomeOk ? 0.2 : -0.3,
+                valenceReason: `subagent retrospective on parent chain`,
+                tags: [`from-subagent:${lin.child_agent_id}`],
+                conversationId: lin.conversation_id ?? undefined,
+              });
+              // Close lineage row.
+              await closeLineage({
+                pool: pool as never,
+                childAgentId: lin.child_agent_id,
+                childSessionKey: event.targetSessionKey,
+                outcome: event.outcome,
+                summary: event.reason,
+                error: event.error,
+              });
+              api.logger.info(
+                `celiums-cognition: subagent_ended · ${lin.parent_agent_id} ← ${lin.child_agent_id} · outcome=${event.outcome ?? "?"}`,
+              );
+              return undefined;
+            } catch (err) {
+              api.logger.warn?.(
+                `celiums-cognition: subagent_ended handler error: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              return undefined;
+            }
+          },
+          { warn: (m) => api.logger.warn?.(m) },
+        ),
+      );
+
       // ── Memory prompt supplement (cache-stable system-prompt section) ──
       // Teaches the model HOW to operate the cognitive surface this
       // plugin exposes — when to call each tool, how to read the affect
@@ -582,14 +819,43 @@ export function createCognitionPlugin(edition: EditionOptions) {
               sessionId: ctx.sessionId,
               conversationId: ctx.conversationId,
             });
+            // Fase B: live re-briefing for subagents. If THIS agent is
+            // registered in agent_lineage as a child whose parent
+            // session is still open, inject the parent's recent journal
+            // entries every turn — not just at spawn. That way the
+            // child sees parent decisions taken AFTER it was spawned.
+            // Cheap: one indexed lookup + one query. Best-effort.
+            let parentBriefing = "";
+            try {
+              const meAsChildAgent = ctx.agentId ?? event.agentId ?? cfg.agentId;
+              const parentInfo = await lookupParent(pool as never, meAsChildAgent);
+              if (parentInfo) {
+                const engine2 = await getEngine();
+                parentBriefing = await composeBriefing({
+                  pool: pool as never,
+                  engine: engine2,
+                  parentAgentId: parentInfo.parentAgentId,
+                  childAgentId: meAsChildAgent,
+                  taskLabel: parentInfo.taskLabel ?? undefined,
+                  cfg: subagentCfg,
+                });
+              }
+            } catch { /* re-briefing is best-effort */ }
+
             if (!tc?.context || tc.total_chars === 0) {
-              return { prependContext: identityPreamble };
+              return {
+                prependContext: parentBriefing
+                  ? `${identityPreamble}\n\n${parentBriefing}`
+                  : identityPreamble,
+              };
             }
             api.logger.info?.(
-              `celiums-cognition: turn_context ${tc.total_chars} chars · channels: ${(tc.channels_loaded ?? []).join(",")} · agent=${ctx.agentId}`,
+              `celiums-cognition: turn_context ${tc.total_chars} chars · channels: ${(tc.channels_loaded ?? []).join(",")} · agent=${ctx.agentId}${parentBriefing ? " · with-parent-briefing" : ""}`,
             );
             return {
-              prependContext: `${identityPreamble}\n\n${tc.context}`,
+              prependContext: [identityPreamble, parentBriefing, tc.context]
+                .filter((s) => s && s.length > 0)
+                .join("\n\n"),
             };
           } catch (err) {
             // Best-effort: try the lightweight recall path before giving up.
@@ -615,9 +881,23 @@ export function createCognitionPlugin(edition: EditionOptions) {
         api.on(
           "agent_end",
           async (
-            event: { success?: boolean; messages?: unknown },
-            ctx: { sessionKey?: string; sessionId?: string },
+            event: { success?: boolean; messages?: unknown; agentId?: string },
+            ctx: { sessionKey?: string; sessionId?: string; agentId?: string; conversationId?: string; requester?: { channel?: string; accountId?: string; to?: string; threadId?: string | number } },
           ) => {
+            // Remember this agent as the parent-of-record for its
+            // current thread, so the next subagent_spawning fired from
+            // the same thread can identify us as the parent. The SDK
+            // doesn't pass parent_session_key in spawn events, so this
+            // map is how we recover the parent identity. 1h TTL.
+            const tKey = threadKey(ctx?.requester, ctx?.sessionKey);
+            if (tKey) {
+              rememberParentForThread(
+                tKey,
+                ctx?.agentId ?? event.agentId ?? cfg.agentId,
+                ctx?.sessionId,
+                ctx?.conversationId,
+              );
+            }
             if (!event.success) return;
             const text = latestUserText(event.messages);
             if (!text) return;
