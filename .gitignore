@@ -31,6 +31,11 @@ pnpm-debug.log*
 # local-only backups (git bundles, dumps) — never tracked
 backups/
 
+# `npm pack` artifacts — built locally for inspection / smoke installs
+# before publish. Never committed; the tarball is produced from current
+# dist/ each time.
+*.tgz
+
 # Agent control plane — operator-specific notes (paths, identities,
 # session pipelines). Kept on disk per-machine, never tracked.
 CLAUDE.md

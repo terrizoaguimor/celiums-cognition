@@ -1,0 +1,39 @@
+Celiums Cognition
+Copyright 2026 Celiums Solutions LLC
+
+This product includes software developed by Celiums Solutions LLC
+(https://github.com/terrizoaguimor/celiums-cognition).
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+A copy of the License is available at:
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+---
+
+This product bundles `celiums-memory` v2.0 (the cognitive engine —
+ethics pipeline, SHA-chained journal, PAD-circadian limbic, hybrid
+retrieval) into the published artifact via tsup. The original
+source is maintained at:
+
+  https://github.com/terrizoaguimor/celiums-memory
+
+celiums-memory is Apache-2.0 licensed. Every vendored file carries
+the provenance header inserted by scripts/apply-vendor-headers.mjs:
+
+    Copyright 2026 Celiums Solutions LLC
+    Licensed under the Apache License, Version 2.0
+    Originally derived from celiums-memory v2.0
+    (https://github.com/terrizoaguimor/celiums-memory, Apache 2.0)
+
+---
+
+The first install downloads two SHA-256-verified corpus artifacts
+hosted outside this npm package, both Apache-2.0:
+
+  - 10K-skill seed:        https://celiums-seed-public.nyc3.digitaloceanspaces.com/seed/
+  - ethics knowledge:      https://github.com/terrizoaguimor/celiums-memory/releases
+
+Skipping either is supported via the corresponding CELIUMS_*_SKIP
+environment variable (see README.md).

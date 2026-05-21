@@ -2,11 +2,32 @@
   "name": "@celiumsai/cognition",
   "version": "0.1.0",
   "type": "module",
-  "description": "Persistent emotional memory for OpenClaw agents — Hard edition (PostgreSQL + Qdrant + Valkey)",
+  "description": "Persistent emotional memory for OpenClaw agents — ethics gate, SHA-chained journal, PAD-circadian limbic, hybrid retrieval (Postgres + Qdrant + Valkey + OpenSearch).",
   "license": "Apache-2.0",
   "author": "Celiums Solutions LLC",
-  "homepage": "https://github.com/celiumssolutions/celiums-cognition",
-  "keywords": ["openclaw", "openclaw-plugin", "memory", "celiums", "clawhub"],
+  "homepage": "https://github.com/terrizoaguimor/celiums-cognition#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/terrizoaguimor/celiums-cognition.git",
+    "directory": "packages/hard"
+  },
+  "bugs": {
+    "url": "https://github.com/terrizoaguimor/celiums-cognition/issues"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "clawhub",
+    "memory",
+    "ethics",
+    "ai-agents",
+    "vector-search",
+    "embeddings",
+    "postgres",
+    "qdrant",
+    "opensearch",
+    "celiums"
+  ],
   "main": "./dist/index.js",
   "bin": {
     "celiums-cognition": "./dist/setup.js"
