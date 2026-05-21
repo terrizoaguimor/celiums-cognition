@@ -448,13 +448,30 @@ export function StatusDot({ status = "ok", live = false }) {
 
 /* ─────────────────────── Sparkline (green) ─────────────────────── */
 export function Sparkline({ data, height = 26 }) {
-  if (!data || data.length === 0) return null;
-  const max = Math.max(...data, 1);
-  const min = Math.min(...data, 0);
+  // Sanitize: a single-element or zero-element dataset can't form a
+  // line, and any non-finite value (NaN/Infinity) poisons the polyline
+  // attribute. Drop those rather than emit `"NaN,24"` to the DOM.
+  const safe = Array.isArray(data)
+    ? data.filter((v) => typeof v === "number" && Number.isFinite(v))
+    : [];
+  if (safe.length === 0) return null;
+  // Single-point chart: render a flat dot at mid-height — informative
+  // without dividing by zero.
+  const w = 100;
+  const h = height;
+  if (safe.length === 1) {
+    const y = h / 2;
+    return (
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: "100%", height }}>
+        <circle cx={w / 2} cy={y} r="2" fill="var(--c-green)" />
+      </svg>
+    );
+  }
+  const max = Math.max(...safe, 1);
+  const min = Math.min(...safe, 0);
   const range = max - min || 1;
-  const w = 100, h = height;
-  const step = w / (data.length - 1);
-  const pts = data.map((v, i) => {
+  const step = w / (safe.length - 1);
+  const pts = safe.map((v, i) => {
     const x = i * step;
     const y = h - ((v - min) / range) * (h - 4) - 2;
     return `${x},${y}`;

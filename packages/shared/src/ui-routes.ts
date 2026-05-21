@@ -656,20 +656,34 @@ async function journalAgents(
   res: ServerResponse,
 ): Promise<void> {
   try {
+    // Two CTEs: per-agent aggregates + per-(agent,type) counts → join.
+    // Avoids the window-function-inside-GROUP-BY trap the previous
+    // single-statement version hit (PG 17 syntax error at OVER).
     const { rows } = await ctx.pool.query(
-      `SELECT agent_id,
-              count(*)::int AS total,
-              max(written_at) AS last_written_at,
-              min(written_at) AS first_written_at,
-              jsonb_object_agg(entry_type, type_count) AS breakdown,
-              avg(valence)::float AS avg_valence
-         FROM (
-           SELECT agent_id, entry_type, written_at, valence,
-                  count(*)::int OVER (PARTITION BY agent_id, entry_type) AS type_count
-             FROM agent_journal
-         ) t
-         GROUP BY agent_id
-         ORDER BY max(written_at) DESC`,
+      `WITH per_agent AS (
+         SELECT agent_id,
+                count(*)::int AS total,
+                max(written_at) AS last_written_at,
+                min(written_at) AS first_written_at,
+                avg(valence)::float AS avg_valence
+           FROM agent_journal
+          GROUP BY agent_id
+       ),
+       per_type AS (
+         SELECT agent_id,
+                jsonb_object_agg(entry_type, n) AS breakdown
+           FROM (
+             SELECT agent_id, entry_type, count(*)::int AS n
+               FROM agent_journal
+              GROUP BY agent_id, entry_type
+           ) x
+          GROUP BY agent_id
+       )
+       SELECT a.agent_id, a.total, a.last_written_at, a.first_written_at,
+              a.avg_valence, COALESCE(t.breakdown, '{}'::jsonb) AS breakdown
+         FROM per_agent a
+         LEFT JOIN per_type t USING (agent_id)
+        ORDER BY a.last_written_at DESC`,
     );
     sendJson(res, 200, { agents: rows });
   } catch (err) {

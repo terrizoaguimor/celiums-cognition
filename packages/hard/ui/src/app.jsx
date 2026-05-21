@@ -146,10 +146,12 @@ export function App() {
 
   // ── motion (hooks MUST run on every render — keep above any
   //     conditional early-return; React's rules-of-hooks tripwire) ──
-  // Lenis is keyed on `enabled` so the smooth-scroll instance is only
-  // bound after the operator authenticates; the hook itself always
-  // runs (cleanup branch when disabled).
-  useLenis(enabled ? "main.celiums-scroll" : null);
+  // Lenis disabled by default — it fought the <main>/<div ref>
+  // structure under flex on certain browsers and produced a no-scroll
+  // pathology. Pass null to keep the hook call slot stable without
+  // mounting the instance. Native scroll is acceptable; reintroduce
+  // Lenis later if/when we move to a sticky-header layout that suits it.
+  useLenis(null);
   const routeRef = useRef(null);
   usePageTransition(routeRef, [route, authState]);
 
