@@ -2,8 +2,8 @@
  * Copyright 2026 Celiums Solutions LLC
  * Licensed under the Apache License, Version 2.0
  */
-import React, { useState, useMemo } from "react";
-import { fetchJournal, fetchCounts, useQuery } from "./data.js";
+import React, { useState, useMemo, useEffect } from "react";
+import { fetchJournal, fetchJournalAgents, fetchCounts, useQuery } from "./data.js";
 import { Ico } from "./celiums-primitives.jsx";
 import { PageHead, SectionCard, StatusDot, HelpPopover, fmtCount } from "./cc-shell.jsx";
 
@@ -15,21 +15,33 @@ const PAGE_SIZE = 30;
 
 export function Journal({ showToast }) {
   const [entryType, setEntryType] = useState("all");
+  const [agentFilter, setAgentFilter] = useState(null); // null = all agents
   const [offset, setOffset] = useState(0);
 
+  const agentsQ = useQuery(fetchJournalAgents, []);
+  const allAgents = agentsQ.data?.agents ?? [];
+
+  // Auto-pick the most-recent agent if "all" returns too noisy a mix;
+  // operator can switch back via the sidebar.
+  useEffect(() => {
+    setOffset(0);
+  }, [agentFilter, entryType]);
+
   const journalQ = useQuery(
-    () => fetchJournal({ limit: PAGE_SIZE, offset }),
-    [offset],
+    () => fetchJournal({
+      limit: PAGE_SIZE,
+      offset,
+      agent_id: agentFilter || null,
+      entry_type: entryType !== "all" ? entryType : null,
+    }),
+    [offset, agentFilter, entryType],
   );
   const countsQ = useQuery(fetchCounts, []);
 
   const allEntries = journalQ.data?.entries ?? [];
   const total = journalQ.data?.total ?? countsQ.data?.journal_entries ?? 0;
-
-  const entries = useMemo(() => {
-    if (entryType === "all") return allEntries;
-    return allEntries.filter((e) => e.entry_type === entryType);
-  }, [allEntries, entryType]);
+  // Server already filters by entry_type; we just pass the rows through.
+  const entries = allEntries;
 
   // Entry-type distribution from the page we have (informative, not exact)
   const typeDistribution = useMemo(() => {
@@ -89,6 +101,47 @@ export function Journal({ showToast }) {
 
       <div className="cc-journal-wrap">
         <aside style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <SectionCard
+            title="Agents on this gateway"
+            count={`${allAgents.length} voices`}
+            action={<HelpPopover title="Per-agent journals">
+              <p style={{ margin: "0 0 8px" }}>
+                Each agent (main, subagents, external models) runs through
+                this gateway has its OWN journal chain, scoped by
+                <code> agent_id</code>. Their reflections never bleed
+                into each other.
+              </p>
+              <p style={{ margin: "8px 0 0", color: "var(--c-fg-muted)" }}>
+                The plugin's auto-journal writes one entry per meaningful
+                turn; the agent itself can add finer entries via
+                <code> journal_write</code>. The hash chain makes any
+                retro-active edit detectable.
+              </p>
+            </HelpPopover>}>
+            <div style={{ padding: "8px 0" }}>
+              <AgentRow
+                agent={{ agent_id: "All voices", total: allAgents.reduce((a, b) => a + (b.total || 0), 0) }}
+                active={agentFilter === null}
+                onClick={() => setAgentFilter(null)}
+                isAll
+              />
+              {agentsQ.loading && <div style={{ padding: "8px 16px", fontSize: 12, color: "var(--c-fg-subtle)" }}>loading…</div>}
+              {!agentsQ.loading && allAgents.length === 0 && (
+                <div style={{ padding: "8px 16px", fontSize: 12, color: "var(--c-fg-subtle)" }}>
+                  No agents have written yet.
+                </div>
+              )}
+              {allAgents.map((a) => (
+                <AgentRow
+                  key={a.agent_id}
+                  agent={a}
+                  active={agentFilter === a.agent_id}
+                  onClick={() => setAgentFilter(a.agent_id)}
+                />
+              ))}
+            </div>
+          </SectionCard>
+
           <SectionCard title="Hash chain" count={`${fmtCount(total)} entries`}>
             <div style={{ padding: 16 }}>
               <div style={{
@@ -145,6 +198,11 @@ export function Journal({ showToast }) {
             <div className="left">
               <span className="count">{entries.length}</span>
               <span>of {fmtCount(total)}</span>
+              {agentFilter && (
+                <span className="celiums-chip green" style={{ marginLeft: 6 }}>
+                  agent: <code style={{ fontFamily: "var(--font-mono)" }}>{agentFilter}</code>
+                </span>
+              )}
             </div>
             <div className="cc-sort">
               <span style={{ fontSize: 11, color: "var(--c-fg-subtle)" }}>Type</span>
@@ -225,6 +283,66 @@ export function JournalEntry({ e, showToast }) {
       </div>
     </div>
   );
+}
+
+/* Sidebar row for one agent — name, entry count, last-written, valence tint. */
+function AgentRow({ agent, active, onClick, isAll }) {
+  const total = Number(agent.total ?? 0);
+  const valence = Number(agent.avg_valence ?? 0);
+  // Border tint based on whether the agent's average valence skews
+  // positive/negative — quick visual for "this voice is stressed".
+  const valenceTint =
+    !isAll && Number.isFinite(valence) && Math.abs(valence) > 0.15
+      ? valence > 0
+        ? "var(--c-green)"
+        : "var(--c-amber-text)"
+      : "transparent";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "flex", width: "100%", alignItems: "center", gap: 8,
+        padding: "8px 14px", border: 0, background: active ? "var(--c-hover)" : "transparent",
+        cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+        borderLeft: `3px solid ${active ? "var(--c-green)" : valenceTint}`,
+      }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{
+          fontSize: 12.5, color: "var(--c-fg)", fontWeight: active ? 500 : 400,
+          fontFamily: isAll ? "inherit" : "var(--font-mono)",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {agent.agent_id}
+        </div>
+        {!isAll && agent.last_written_at && (
+          <div style={{ fontSize: 10.5, color: "var(--c-fg-subtle)", marginTop: 1 }}>
+            last {fmtRelativeShort(agent.last_written_at)}
+            {Number.isFinite(valence) && Math.abs(valence) > 0.05 && (
+              <span style={{ marginLeft: 6 }}>· v {valence.toFixed(2)}</span>
+            )}
+          </div>
+        )}
+      </div>
+      <span style={{
+        fontFamily: "var(--font-mono)", fontSize: 11,
+        color: "var(--c-fg-muted)", padding: "1px 6px",
+        background: "var(--c-surface-2)", borderRadius: 4,
+      }}>{total}</span>
+    </button>
+  );
+}
+
+function fmtRelativeShort(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    const secs = Math.max(1, Math.floor((Date.now() - d.getTime()) / 1000));
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+    return `${Math.floor(secs / 86400)}d ago`;
+  } catch { return "—"; }
 }
 
 function short(s, n = 16) {

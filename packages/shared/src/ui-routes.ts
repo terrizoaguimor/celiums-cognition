@@ -594,30 +594,81 @@ async function journalRecent(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  // Engine table is `agent_journal` (no per-user table because the engine
-  // is single-tenant at this layer; the user_id column lives on each row
-  // when the dispatcher passes it through, but single-account plugin
-  // ignores it for display).
+  // Per-agent scoping (Mario 2026-05-21): each agent — main, subagents,
+  // external models — keeps its own SHA-chained journal. ?agent_id=X
+  // narrows to that voice; omitting it returns the union for the
+  // overview view. Entry-type filter remains compatible with the older
+  // single-stream UI.
   const { limit, offset } = paginate(req);
+  const agentId = parseQuery(req).get("agent_id")?.trim() ?? "";
+  const entryType = parseQuery(req).get("entry_type")?.trim() ?? "";
+  const args: unknown[] = [];
+  const where: string[] = [];
+  if (agentId) {
+    args.push(agentId);
+    where.push(`agent_id = $${args.length}`);
+  }
+  if (entryType && entryType !== "all") {
+    args.push(entryType);
+    where.push(`entry_type = $${args.length}`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   try {
+    const countArgs = [...args];
+    args.push(limit, offset);
     const { rows } = await ctx.pool.query(
       `SELECT id, agent_id, session_id, entry_type, content, importance,
               written_at, prev_hash, hash, conversation_id, valence,
               valence_reason, visibility, tags, preceded_by
          FROM agent_journal
+         ${whereSql}
         ORDER BY written_at DESC
-        LIMIT $1 OFFSET $2`,
-      [limit, offset],
+        LIMIT $${args.length - 1} OFFSET $${args.length}`,
+      args,
     );
     const { rows: countRows } = await ctx.pool.query(
-      `SELECT count(*)::int AS n FROM agent_journal`,
+      `SELECT count(*)::int AS n FROM agent_journal ${whereSql}`,
+      countArgs,
     );
     sendJson(res, 200, {
       entries: rows,
       total: countRows[0]?.n ?? 0,
       limit,
       offset,
+      agent_id: agentId || null,
     });
+  } catch (err) {
+    sendError(res, 500, "DB_ERROR", String(err));
+  }
+}
+
+/** GET /api/celiums-cognition/journal/agents
+ *  List every agent_id that has at least one journal entry, with row
+ *  counts + last-written timestamp + a per-entry-type breakdown. The
+ *  Journal tab uses this to render a left sidebar of voices the
+ *  operator can switch between. */
+async function journalAgents(
+  ctx: UiRouterContext,
+  _req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  try {
+    const { rows } = await ctx.pool.query(
+      `SELECT agent_id,
+              count(*)::int AS total,
+              max(written_at) AS last_written_at,
+              min(written_at) AS first_written_at,
+              jsonb_object_agg(entry_type, type_count) AS breakdown,
+              avg(valence)::float AS avg_valence
+         FROM (
+           SELECT agent_id, entry_type, written_at, valence,
+                  count(*)::int OVER (PARTITION BY agent_id, entry_type) AS type_count
+             FROM agent_journal
+         ) t
+         GROUP BY agent_id
+         ORDER BY max(written_at) DESC`,
+    );
+    sendJson(res, 200, { agents: rows });
   } catch (err) {
     sendError(res, 500, "DB_ERROR", String(err));
   }
@@ -1063,6 +1114,7 @@ export interface UiRoutes {
   skillDetail: UiRouteHandler;
   memoriesList: UiRouteHandler;
   journalRecent: UiRouteHandler;
+  journalAgents: UiRouteHandler;
   ethicsEvents: UiRouteHandler;
   activitySparklines: UiRouteHandler;
   activityRecent: UiRouteHandler;
@@ -1091,6 +1143,8 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
       memoriesList(ctx, req, res),
     journalRecent: (req: IncomingMessage, res: ServerResponse) =>
       journalRecent(ctx, req, res),
+    journalAgents: (req: IncomingMessage, res: ServerResponse) =>
+      journalAgents(ctx, req, res),
     ethicsEvents: (req: IncomingMessage, res: ServerResponse) =>
       ethicsEvents(ctx, req, res),
     activitySparklines: (req: IncomingMessage, res: ServerResponse) =>
@@ -1171,6 +1225,7 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
     if (p.startsWith("/skills/")) return h.skillDetail(req, res);
     if (p === "/memories") return h.memoriesList(req, res);
     if (p === "/journal/recent") return h.journalRecent(req, res);
+    if (p === "/journal/agents") return h.journalAgents(req, res);
     if (p === "/ethics/events") return h.ethicsEvents(req, res);
     if (p === "/activity/sparklines") return h.activitySparklines(req, res);
     if (p === "/activity/recent") return h.activityRecent(req, res);

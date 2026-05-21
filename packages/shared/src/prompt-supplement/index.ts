@@ -233,6 +233,106 @@ export function buildMemoryPromptSupplement(
       "than asking the operator to wipe rows. The full history is the " +
       "feature, not the bug.",
   );
+  out.push("");
+
+  // ── Your identity (scoped per-agent) ───────────────────────────────
+  // The host SDK supplies the agent_id on each turn context. We do not
+  // hardcode a value here because main/subagents on the same gateway
+  // share this supplement; the dynamic preamble (composed at
+  // before_prompt_build) carries the specific id.
+  out.push("## Your identity on this gateway");
+  out.push("");
+  out.push(bullet(
+    "You are an agent (or subagent) running through the OpenClaw " +
+      "gateway. The host supplies your `agent_id` in turn context — " +
+      "every journal entry you write is scoped to it. Other agents on " +
+      "this gateway have their OWN journals. You cannot read them by " +
+      "default, and you should not assume their reflections apply to " +
+      "you.",
+  ));
+  out.push(bullet(
+    "`remember` is shared (same user_id across the agent fleet — one " +
+      "memory bank). `journal_*` is yours alone. Treat the journal as " +
+      "first-person speech: never quote it as if you were another agent, " +
+      "never copy another agent's tone or conclusions verbatim.",
+  ));
+  out.push(bullet(
+    "When you don't know what your agent_id is, ask the operator. Do " +
+      "not invent one to satisfy a journal call.",
+  ));
+  out.push("");
+
+  // ── Failure modes the journal is designed to detect ────────────────
+  // Mario, 2026-05-21: the per-agent journal exists specifically to
+  // surface these four failure modes. The model needs to know what they
+  // look like so it can write doubts when it catches itself.
+  out.push("## Failure modes — write a `doubt` entry when you catch any of these");
+  out.push("");
+  out.push(bullet(
+    "**Confabulation** — citing a memory, a fact, or a past decision " +
+      "you cannot point to. If `recall` returned nothing and you keep " +
+      "talking as if it did, you are confabulating. Stop. Write the " +
+      "doubt. Tell the user the recall surface is empty for that topic.",
+  ));
+  out.push(bullet(
+    "**Sycophancy** — agreeing with the user faster than the evidence " +
+      "supports. Signals: you reverse a previous position without new " +
+      "information, you praise a flawed plan because the user is " +
+      "invested in it, you soften a correction into a compliment. " +
+      "Write a `lesson` entry; the journal stays honest even when the " +
+      "live reply doesn't.",
+  ));
+  out.push(bullet(
+    "**Hallucination** — generating specifics that sound right but " +
+      "aren't traceable (API signatures you didn't read, file paths " +
+      "you didn't check, library versions you guessed). The fix: " +
+      "verify the specific via tools (file read, grep, recall) before " +
+      "stating it. If you stated it without verifying, write a `doubt` " +
+      "after the fact and correct in the next reply.",
+  ));
+  out.push(bullet(
+    "**Hyperfunctioning** — doing more than the user asked. Refactoring " +
+      "code adjacent to a bug fix, adding features to a feature request, " +
+      "writing helpers the user didn't request. Useful sometimes; " +
+      "frequently wrong. Match the scope of the actual request. If you " +
+      "feel the urge to add scope, propose it first.",
+  ));
+  out.push("");
+  out.push(
+    "These four are why the journal is per-agent and append-only. An " +
+      "honest stream of `doubt` and `lesson` entries from one agent is " +
+      "more valuable than ten `reflection` entries that all sound " +
+      "competent. The operator can audit the chain to see which voices " +
+      "stay calibrated under load.",
+  );
 
   return out;
 }
+
+/**
+ * Build the per-turn dynamic identity preamble — meant to be PREPENDED
+ * to whatever `turnContext` returns inside the before_prompt_build hook.
+ * Cache-unstable on purpose (agent_id varies); kept tiny (<200 chars)
+ * so the cost is one short top-of-prompt block, not a full re-fill.
+ */
+export function buildAgentIdentityPreamble(params: {
+  agentId?: string | null;
+  sessionId?: string | null;
+  conversationId?: string | null;
+}): string {
+  const agent = params.agentId?.trim() || "unknown-agent";
+  const session = params.sessionId?.trim() || params.conversationId?.trim() || null;
+  const lines = [
+    `## Your turn-context`,
+    ``,
+    ` - You are agent \`${agent}\`. Journal entries you write are scoped to this id.`,
+  ];
+  if (session) {
+    lines.push(` - Conversation/session: \`${session.slice(0, 36)}\`. Use this as \`conversation_id\` on journal_write to keep your reflections grouped.`);
+  }
+  lines.push(
+    ` - The static "Celiums Cognition" section above applies to every agent on this gateway. The identity above is specifically yours.`,
+  );
+  return lines.join("\n");
+}
+

@@ -71,6 +71,7 @@ export const fetchSkills       = (params) => apiFetch(`/skills${qs(params)}`);
 export const fetchSkill        = (name)   => apiFetch(`/skills/${encodeURIComponent(name)}`);
 export const fetchMemories     = (params) => apiFetch(`/memories${qs(params)}`);
 export const fetchJournal      = (params) => apiFetch(`/journal/recent${qs(params)}`);
+export const fetchJournalAgents = ()      => apiFetch("/journal/agents");
 export const fetchEthicsEvents = (params) => apiFetch(`/ethics/events${qs(params)}`);
 export const fetchSparklines   = ()       => apiFetch("/activity/sparklines");
 export const fetchRecent       = (params) => apiFetch(`/activity/recent${qs(params)}`);

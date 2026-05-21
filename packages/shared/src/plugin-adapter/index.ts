@@ -37,7 +37,10 @@ import {
 } from "../seed.js";
 import { makeUiRouter, type UiRouterContext } from "../ui-routes.js";
 import { makeUiStaticHandler } from "../ui-static.js";
-import { buildMemoryPromptSupplement } from "../prompt-supplement/index.js";
+import {
+  buildMemoryPromptSupplement,
+  buildAgentIdentityPreamble,
+} from "../prompt-supplement/index.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -476,11 +479,25 @@ export function createCognitionPlugin(edition: EditionOptions) {
               ),
               AUTO_RECALL_TIMEOUT_MS,
             );
-            if (!tc?.context || tc.total_chars === 0) return undefined;
+            // Identity preamble — small dynamic block telling THIS
+            // specific agent which `agent_id` owns the journal entries
+            // it's about to write. Prepended to the static-supplement +
+            // dynamic-turn_context stack so the model can't mistake
+            // someone else's voice for its own. Cache-unstable but tiny.
+            const identityPreamble = buildAgentIdentityPreamble({
+              agentId: ctx.agentId,
+              sessionId: ctx.sessionId,
+              conversationId: ctx.conversationId,
+            });
+            if (!tc?.context || tc.total_chars === 0) {
+              return { prependContext: identityPreamble };
+            }
             api.logger.info?.(
-              `celiums-cognition: turn_context ${tc.total_chars} chars · channels: ${(tc.channels_loaded ?? []).join(",")}`,
+              `celiums-cognition: turn_context ${tc.total_chars} chars · channels: ${(tc.channels_loaded ?? []).join(",")} · agent=${ctx.agentId}`,
             );
-            return { prependContext: tc.context };
+            return {
+              prependContext: `${identityPreamble}\n\n${tc.context}`,
+            };
           } catch (err) {
             // Best-effort: try the lightweight recall path before giving up.
             api.logger.warn(`celiums-cognition: turn_context failed (${String(err)}); falling back to recall-only`);
