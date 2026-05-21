@@ -217,14 +217,15 @@
 .celiums-hint.error { color: var(--c-red-text); }
 
 /* Glass tokens — frosted-surface look for floating UI (drawers,
- * popovers, command palette, user menu, tweaks panel). Tuned to be
- * subtle: enough blur to feel layered, alpha high enough that text
- * stays legible over busy backgrounds. Bumped to 0.94 strong after
- * 2026-05-21 — the 0.88 leaked too much of the page behind the
- * drawer through the blur in dark mode. */
+ * popovers, command palette, user menu, tweaks panel). Mario, 2026-
+ * 05-21: keep the glass effect, but make it opaque enough that the
+ * busy memory/journal list behind a drawer doesn't bleed through and
+ * compete with the panel's own text. 0.95 wasn't enough in dark mode;
+ * 0.99 keeps the blur+saturate signature while reducing bleed to
+ * almost nothing. */
 .celiums {
-  --c-glass:        rgba(251, 251, 247, 0.78);
-  --c-glass-strong: rgba(251, 251, 247, 0.96);
+  --c-glass:        rgba(251, 251, 247, 0.82);
+  --c-glass-strong: rgba(251, 251, 247, 0.99);
   --glass-blur:     blur(14px) saturate(160%);
   /* Tri-color brand gradient used for card borders + accents. Sampled
    * from green/amber/red at low alpha so it reads as polish, not
@@ -244,8 +245,8 @@
 }
 .celiums[data-theme="dark"],
 [data-theme="dark"] .celiums {
-  --c-glass:        rgba(17, 20, 15, 0.78);
-  --c-glass-strong: rgba(17, 20, 15, 0.95);
+  --c-glass:        rgba(17, 20, 15, 0.82);
+  --c-glass-strong: rgba(17, 20, 15, 0.99);
   --celiums-grad:
     linear-gradient(135deg,
       rgba(0,210,106,0.42) 0%,
