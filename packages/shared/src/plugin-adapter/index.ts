@@ -37,6 +37,7 @@ import {
 } from "../seed.js";
 import { makeUiRouter, type UiRouterContext } from "../ui-routes.js";
 import { makeUiStaticHandler } from "../ui-static.js";
+import { buildMemoryPromptSupplement } from "../prompt-supplement/index.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -345,6 +346,38 @@ export function createCognitionPlugin(edition: EditionOptions) {
       api.logger.info(
         `celiums-cognition: registering ${tools.length}/${registry.length} tools (${cfg.exposedTools})`,
       );
+
+      // ── Memory prompt supplement (cache-stable system-prompt section) ──
+      // Teaches the model HOW to operate the cognitive surface this
+      // plugin exposes — when to call each tool, how to read the affect
+      // signals returned, integrity rules, ethics layer behavior, and
+      // anti-injection handling. Filtered by availableTools so the model
+      // only sees guidance for what it can actually invoke. The builder
+      // runs at every prompt-build but produces a stable string per
+      // (toolset, citationsMode) pair, so prompt-cache reuse is preserved.
+      try {
+        const maybeRegister = (api as unknown as {
+          registerMemoryPromptSupplement?: (
+            builder: (params: { availableTools?: unknown; citationsMode?: unknown }) => string[],
+          ) => void;
+        }).registerMemoryPromptSupplement;
+        if (typeof maybeRegister === "function") {
+          maybeRegister.call(api, (params: { availableTools?: unknown; citationsMode?: unknown }) => {
+            const tools = params?.availableTools as Set<string> | string[] | undefined;
+            return buildMemoryPromptSupplement(tools);
+          });
+          api.logger.info(`celiums-cognition: registered memory prompt supplement`);
+        } else {
+          api.logger.warn?.(
+            `celiums-cognition: api.registerMemoryPromptSupplement not available on this host — model will not see the operating guide`,
+          );
+        }
+      } catch (err) {
+        api.logger.warn?.(
+          `celiums-cognition: failed to register prompt supplement: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
       for (const tool of tools) {
         api.registerTool(
           {
