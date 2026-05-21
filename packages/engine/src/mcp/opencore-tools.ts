@@ -567,15 +567,22 @@ export const handleEthicsTrace: McpToolHandler = async (args, ctx) => {
           1,
           Math.max(0, Number(firstBlocked?.confidence ?? 0.5)),
         );
+        // Preserve the original prompt as `action_attempted`. Cap at 2KB
+        // — the SHA-256-truncated content_hash still references the full
+        // content for forensic linkage; this lets the audit UI render
+        // *what was tried* alongside *why it was blocked*.
+        const actionAttempted = content ? content.slice(0, 2000) : null;
         await pool.query(
           `INSERT INTO ethics_audit (user_id, law_violated, confidence, reason,
-             blocked, content_hash, detected_categories, scores, final_decision)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+             action_attempted, blocked, content_hash, detected_categories,
+             scores, final_decision)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [
             ctx.userId || null,
             lawId,
             conf,
             reason,
+            actionAttempted,
             enforcementBlocked,
             contentHash,
             categories,

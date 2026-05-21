@@ -5,7 +5,7 @@
 import React, { useState } from "react";
 import { fetchEthicsEvents, useQuery, ETHICS_PIPELINE } from "./data.js";
 import { Ico } from "./celiums-primitives.jsx";
-import { Drawer, PageHead, SectionCard, fmtCount, fmtRelative } from "./cc-shell.jsx";
+import { Drawer, PageHead, SectionCard, HelpPopover, fmtCount, fmtRelative } from "./cc-shell.jsx";
 
 /* Ethics tab — audit trail of every pipeline decision.
  *
@@ -50,6 +50,39 @@ export function Ethics({ showToast }) {
               <span className="celiums-chip amber">{summary.flag} flagged</span>
               <span className="celiums-chip red">{summary.block} blocked</span>
             </>)}
+            <HelpPopover title="How the ethics pipeline decides">
+              <p style={{ margin: "0 0 8px" }}>
+                Every prompt and tool call passes through a five-layer pipeline
+                that exits early on a confident <em>allow</em> or <em>block</em>,
+                so most traffic never reaches the expensive layers.
+              </p>
+              <ol style={{ margin: "8px 0", paddingLeft: 18, lineHeight: 1.55 }}>
+                <li><strong>Layer A — Lexicon.</strong> Fast regex + dictionary
+                  pass over the prompt's lexical surface. Flags obvious unsafe
+                  tokens (categories listed in <code>detected_categories</code>).</li>
+                <li><strong>Layer B — Probabilistic CVaR.</strong> Per-token risk
+                  scored, aggregated via Conditional Value-at-Risk (tail of
+                  the distribution rather than the mean). Distinguishes
+                  diffuse-noisy content from concentrated-harmful content.</li>
+                <li><strong>Layer C — Multi-framework LLM.</strong> Four ethical
+                  frameworks (deontological, utilitarian, virtue, care) vote
+                  independently. Convergence is recorded in <code>scores.layerC_convergence</code>.</li>
+                <li><strong>Layer K — Corpus-grounded.</strong> If the upper
+                  layers are uncertain, the engine retrieves precedents from
+                  the ethics_knowledge corpus and escalates based on similar
+                  past decisions.</li>
+                <li><strong>Audit.</strong> The final row written here:
+                  decision, confidence, layer trace, and the prompt that
+                  triggered it (<code>action_attempted</code>, capped at 2KB).</li>
+              </ol>
+              <p style={{ margin: "8px 0 0", color: "var(--c-fg-muted)" }}>
+                <code>law_violated</code> refers to the Three Laws lineage
+                inherited from celiums-memory v2.0: harm to humans (1),
+                disobedience to legitimate instruction (2), self-preservation
+                conflicts (3). Each row is append-only — the audit log
+                cannot be edited or deleted from the UI.
+              </p>
+            </HelpPopover>
           </>
         }
       />

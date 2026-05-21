@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from "react";
 import { fetchMemories, useQuery } from "./data.js";
 import { Ico } from "./celiums-primitives.jsx";
-import { Drawer, PageHead, fmtCount, fmtRelative } from "./cc-shell.jsx";
+import { Drawer, PageHead, HelpPopover, fmtCount, fmtRelative } from "./cc-shell.jsx";
 
 /* Memories tab — VAD-tagged persistent memories from the cognitive store.
  *
@@ -65,6 +65,29 @@ export function Memories({ showToast }) {
           <>
             <span className="celiums-chip green">affect-tagged</span>
             <span className="celiums-chip">importance-scored</span>
+            <HelpPopover title="VAD / PAD affect model">
+              <p style={{ margin: "0 0 8px" }}>
+                Every memory carries three affective axes drawn from the
+                <em> Pleasure–Arousal–Dominance</em> (PAD, also called VAD)
+                model — a continuous representation of emotional state
+                used in affective computing since Mehrabian (1974).
+              </p>
+              <ul style={{ margin: "8px 0", paddingLeft: 18, lineHeight: 1.5 }}>
+                <li><strong>Valence</strong> (−1…+1): pleasant ↔ unpleasant.
+                  Captured as <code>emotional_valence</code>.</li>
+                <li><strong>Arousal</strong> (0…1): calm ↔ activated. How
+                  energized the moment felt.</li>
+                <li><strong>Dominance</strong> (0…1): submissive ↔ in
+                  control. Whether the agent felt steered or steering.</li>
+              </ul>
+              <p style={{ margin: "8px 0 0", color: "var(--c-fg-muted)" }}>
+                These values flow into recall: the engine retrieves
+                memories with affect similar to the current conversational
+                state, not just topically similar ones. This is what makes
+                Cognition <em>persistent emotional</em> memory rather than
+                plain semantic search.
+              </p>
+            </HelpPopover>
           </>
         }
       />

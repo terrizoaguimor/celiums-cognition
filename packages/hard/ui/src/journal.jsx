@@ -5,7 +5,7 @@
 import React, { useState, useMemo } from "react";
 import { fetchJournal, fetchCounts, useQuery } from "./data.js";
 import { Ico } from "./celiums-primitives.jsx";
-import { PageHead, SectionCard, StatusDot, fmtCount } from "./cc-shell.jsx";
+import { PageHead, SectionCard, StatusDot, HelpPopover, fmtCount } from "./cc-shell.jsx";
 
 /* Journal tab — hash-chained first-person agent journal.
  * Each row carries prev_hash + hash; the chain can be re-verified by
@@ -55,6 +55,34 @@ export function Journal({ showToast }) {
           <>
             <span className="celiums-chip green">SHA-256</span>
             <span className="celiums-chip">append-only</span>
+            <HelpPopover title="Tamper-evident journal chain">
+              <p style={{ margin: "0 0 8px" }}>
+                After every meaningful exchange, the agent appends a
+                first-person reflection here. Each row carries
+                <code> hash = SHA-256(prev_hash ∥ canonicalize(body))</code>,
+                so any retroactive edit to an entry — even one that compiles
+                cleanly into the same column types — breaks the chain.
+              </p>
+              <p style={{ margin: "8px 0" }}>
+                <strong>Entry types:</strong>
+              </p>
+              <ul style={{ margin: "8px 0", paddingLeft: 18, lineHeight: 1.55, fontSize: 12 }}>
+                <li><code>reflection</code> — a thought about how a session went</li>
+                <li><code>decision</code> — a choice the agent committed to</li>
+                <li><code>lesson</code> — a heuristic worth carrying forward</li>
+                <li><code>belief</code> — a stated position about the world or the user</li>
+                <li><code>emotion</code> — affect snapshot worth preserving</li>
+                <li><code>arc</code> — narrative thread spanning several sessions</li>
+                <li><code>doubt</code> — something the agent isn't sure about and wants flagged</li>
+              </ul>
+              <p style={{ margin: "8px 0 0", color: "var(--c-fg-muted)" }}>
+                <code>valence</code> is the agent's felt sense of the entry
+                (−1…+1). <code>valence_reason</code> is its own one-line
+                justification — useful when reading back why it felt the
+                way it did. <code>preceded_by</code> threads multi-step
+                reasoning into a DAG, not just a chain.
+              </p>
+            </HelpPopover>
           </>
         }
       />

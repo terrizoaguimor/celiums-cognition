@@ -322,17 +322,20 @@ export function PreAuthShell({ theme = 'light', children, width = 1280, height =
             aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
             title={isDark ? "Light mode" : "Dark mode"}
             style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              width: 30, height: 30,
-              background: 'transparent',
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '7px 12px',
+              background: 'var(--c-surface)',
               border: '1px solid var(--c-border)',
-              borderRadius: 6,
-              color: 'var(--c-fg-muted)',
+              borderRadius: 8,
+              color: 'var(--c-fg)',
               cursor: 'pointer',
-              fontSize: 14,
-              padding: 0,
+              fontSize: 13,
+              fontFamily: 'inherit',
+              fontWeight: 500,
+              lineHeight: 1,
             }}>
-            {isDark ? '☀' : '☾'}
+            <span style={{ fontSize: 16 }}>{isDark ? '☀' : '☾'}</span>
+            <span>{isDark ? 'Light' : 'Dark'}</span>
           </button>
         )}
         {children._sideLink}

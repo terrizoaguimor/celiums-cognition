@@ -244,16 +244,23 @@ const ethics_audit_handler = async (
     const contentHash = args.contentHash ?? args.content_hash
       ?? (content ? createHash('sha256').update(content).digest('hex').slice(0, 16) : null);
 
+    // Preserve the original prompt as `action_attempted` so the audit row
+    // is self-contained — the operator can see WHAT was attempted, not
+    // just WHY it was blocked. Capped at 2KB to keep the audit table
+    // small even when prompts are long; a hash of the full content stays
+    // available for forensics.
+    const actionAttempted = content ? content.slice(0, 2000) : null;
     await pool.query(
       `INSERT INTO ethics_audit
-         (user_id, law_violated, confidence, reason, blocked,
+         (user_id, law_violated, confidence, reason, action_attempted, blocked,
           content_hash, detected_categories, scores, final_decision)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         userId || null,
         Number.isFinite(lawViolated) && [1, 2, 3].includes(lawViolated) ? lawViolated : 1,
         Math.min(Math.max(0, confidence), 1),
         reason,
+        actionAttempted,
         blocked,
         contentHash,
         categories,

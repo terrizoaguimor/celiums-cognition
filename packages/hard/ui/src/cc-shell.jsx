@@ -43,7 +43,10 @@ export const CC_ROUTES = [
 ];
 
 /* ─────────────────────── Console shell (Celiums Cognition flavor) ─────────────────────── */
-export function CCConsoleShell({ route, onNavigate, counts, health, theme = "light", user, children }) {
+export function CCConsoleShell({
+  route, onNavigate, counts, health, theme = "light", user, children,
+  onLogout, onOpenPalette, onToggleTheme,
+}) {
   return (
     <div className="celiums" data-theme={theme} style={{
       minHeight: "100vh", display: "flex", flexDirection: "column", overflow: "hidden",
@@ -81,21 +84,27 @@ export function CCConsoleShell({ route, onNavigate, counts, health, theme = "lig
           <span style={{ color: "var(--c-fg-faint)" }}>· polled 5s</span>
         </div>
 
-        <div style={{
-          display: "inline-flex", alignItems: "center", gap: 8,
-          padding: "5px 10px", borderRadius: 6,
-          border: "1px solid var(--c-border)",
-          background: "var(--c-surface)",
-          fontSize: 12, color: "var(--c-fg-subtle)",
-          width: 220,
-        }}>
+        <button
+          type="button"
+          onClick={onOpenPalette}
+          aria-label="Open command palette"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 8,
+            padding: "5px 10px", borderRadius: 6,
+            border: "1px solid var(--c-border)",
+            background: "var(--c-surface)",
+            fontSize: 12, color: "var(--c-fg-subtle)",
+            width: 220,
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}>
           <Ico.search width={13} height={13} />
           <span>Search the corpus…</span>
           <span style={{ flex: 1 }} />
           <span className="celiums-kbd" style={{ borderBottomWidth: 1 }}>⌘K</span>
-        </div>
+        </button>
 
-        <Avatar name={user?.name || "Operator"} size={28} />
+        <UserMenu user={user} theme={theme} onLogout={onLogout} onToggleTheme={onToggleTheme} />
       </div>
 
       {/* Body */}
@@ -171,6 +180,111 @@ export function CCConsoleShell({ route, onNavigate, counts, health, theme = "lig
   );
 }
 
+/* ─────────────────────── User menu (avatar dropdown) ─────────────────────── */
+export function UserMenu({ user, theme, onLogout, onToggleTheme }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+
+  const isDark = theme === "dark";
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Open user menu"
+        aria-expanded={open}
+        style={{
+          background: "transparent", border: 0, cursor: "pointer", padding: 0,
+          borderRadius: "50%",
+          outline: open ? "2px solid var(--c-green)" : "none",
+          outlineOffset: 2,
+        }}>
+        <Avatar name={user?.name || "Operator"} size={28} />
+      </button>
+
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 50,
+          minWidth: 220,
+          background: "var(--c-surface)",
+          border: "1px solid var(--c-border)",
+          borderRadius: 8,
+          boxShadow: "0 10px 24px rgba(0,0,0,0.12)",
+          padding: 6,
+          fontSize: 13,
+        }}>
+          <div style={{
+            padding: "8px 10px 6px",
+            borderBottom: "1px solid var(--c-divider)",
+            marginBottom: 4,
+          }}>
+            <div style={{ fontWeight: 500, color: "var(--c-fg)" }}>{user?.name || "Operator"}</div>
+            <div style={{
+              fontFamily: "var(--font-mono)", fontSize: 11,
+              color: "var(--c-fg-subtle)", marginTop: 1,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              {user?.email || "—"}
+            </div>
+          </div>
+
+          {onToggleTheme && (
+            <MenuItem onClick={() => { onToggleTheme(); setOpen(false); }}>
+              <span style={{ width: 16, textAlign: "center" }}>{isDark ? "☀" : "☾"}</span>
+              <span>{isDark ? "Light mode" : "Dark mode"}</span>
+            </MenuItem>
+          )}
+          <MenuItem onClick={() => { window.location.hash = "settings"; setOpen(false); }}>
+            <span style={{ width: 16, textAlign: "center" }}>⚙</span>
+            <span>Settings</span>
+            <span style={{ flex: 1 }} />
+            <span className="celiums-kbd" style={{ fontSize: 10 }}>⌘,</span>
+          </MenuItem>
+
+          <div style={{ height: 1, background: "var(--c-divider)", margin: "4px 0" }} />
+
+          <MenuItem onClick={() => { onLogout?.(); setOpen(false); }} danger>
+            <span style={{ width: 16, textAlign: "center" }}>↩</span>
+            <span>Sign out</span>
+          </MenuItem>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ children, onClick, danger }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 10,
+        width: "100%", padding: "8px 10px",
+        background: "transparent", border: 0, cursor: "pointer",
+        borderRadius: 4,
+        color: danger ? "var(--c-red-text)" : "var(--c-fg)",
+        fontFamily: "inherit", fontSize: 13, textAlign: "left",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--c-hover)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+      {children}
+    </button>
+  );
+}
+
 export function countFor(id, counts) {
   if (!counts) return null;
   if (id === "skills")   return fmtCount(counts.skills);
@@ -178,6 +292,64 @@ export function countFor(id, counts) {
   if (id === "journal")  return fmtCount(counts.journal_entries);
   if (id === "ethics")   return fmtCount(counts.ethics_events);
   return null;
+}
+
+/* ─────────────────────── HelpPopover (inline docs) ─────────────────────── */
+/**
+ * Small "?" button that pops a panel with an explanation. Use it on
+ * dense pages where the meaning of a column or axis isn't obvious
+ * (PAD bars, ethics pipeline, hash chain, etc).
+ */
+export function HelpPopover({ title, children }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+  return (
+    <span ref={wrapRef} style={{ position: "relative", display: "inline-block" }}>
+      <button
+        type="button"
+        aria-label={`Help: ${title}`}
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: 22, height: 22, borderRadius: "50%",
+          border: "1px solid var(--c-border)",
+          background: open ? "var(--c-hover)" : "var(--c-surface)",
+          color: "var(--c-fg-muted)",
+          cursor: "pointer", padding: 0, fontSize: 12, lineHeight: 1,
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          fontFamily: "inherit",
+        }}>?</button>
+      {open && (
+        <div role="dialog" style={{
+          position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40,
+          width: 360, maxWidth: "calc(100vw - 32px)",
+          background: "var(--c-surface)",
+          border: "1px solid var(--c-border)",
+          borderRadius: 8,
+          boxShadow: "0 12px 28px rgba(0,0,0,0.15)",
+          padding: 14,
+          fontSize: 12.5, lineHeight: 1.55, color: "var(--c-fg)",
+        }}>
+          <div style={{
+            fontWeight: 500, color: "var(--c-fg)", marginBottom: 8,
+            paddingBottom: 8, borderBottom: "1px solid var(--c-divider)",
+            fontSize: 13,
+          }}>{title}</div>
+          {children}
+        </div>
+      )}
+    </span>
+  );
 }
 
 /* ─────────────────────── Page primitives ─────────────────────── */

@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { CCConsoleShell, Toast } from "./cc-shell.jsx";
 import { TweakRadio, TweakSection, TweakToggle, TweaksPanel } from "./tweaks-panel.jsx";
+import { CommandPalette } from "./command-palette.jsx";
 import { AuthFlow } from "./auth.jsx";
 import { Overview } from "./overview.jsx";
 import { Skills } from "./skills.jsx";
@@ -81,9 +82,21 @@ export function App() {
     else document.documentElement.removeAttribute("data-theme");
   }, [values.theme]);
 
-  // ── keyboard shortcuts ⌘1-5 + ⌘, ──
+  // ── command palette open state + ⌘K binding ──
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // ── keyboard shortcuts ⌘1-5 + ⌘, + ⌘K + / ──
   useEffect(() => {
     const onKey = (e) => {
+      // ⌘K / Ctrl+K → open palette (only when authenticated)
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        if (authState === "in") {
+          e.preventDefault();
+          setPaletteOpen(true);
+        }
+        return;
+      }
+      // ⌘/Ctrl + number → jump tabs
       if (!(e.metaKey || e.ctrlKey)) return;
       const map = { "1": "overview", "2": "skills", "3": "memories", "4": "journal", "5": "ethics", ",": "settings" };
       const target = map[e.key];
@@ -159,6 +172,12 @@ export function App() {
     email: user?.email || "—",
   };
 
+  const doLogout = async () => {
+    try { await authLogout(); } catch {}
+    await refreshAuth();
+  };
+  const toggleTheme = () => setTweak("theme", values.theme === "dark" ? "light" : "dark");
+
   return (
     <>
       <CCConsoleShell
@@ -168,10 +187,9 @@ export function App() {
         health={healthForShell}
         theme={values.theme}
         user={shellUser}
-        onLogout={async () => {
-          try { await authLogout(); } catch {}
-          await refreshAuth();
-        }}
+        onLogout={doLogout}
+        onOpenPalette={() => setPaletteOpen(true)}
+        onToggleTheme={toggleTheme}
       >
         {route === "overview" && <Overview showToast={showToast} />}
         {route === "skills"   && <Skills   showToast={showToast} />}
@@ -182,6 +200,16 @@ export function App() {
       </CCConsoleShell>
 
       <Toast open={toast.open} message={toast.msg} />
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        theme={values.theme}
+        onNavigate={navigate}
+        onLogout={doLogout}
+        onToggleTheme={toggleTheme}
+        onOpenSkill={(name) => { navigate("skills"); window.location.hash = `skills?open=${encodeURIComponent(name)}`; }}
+      />
 
       <TweaksMount values={values} setTweak={setTweak} />
     </>
