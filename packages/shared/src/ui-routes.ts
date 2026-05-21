@@ -166,6 +166,17 @@ export interface UiRouterContext {
    *  /operator-status so the cognition widget chip shows the right
    *  state. Falls back to "radar" when unset. */
   ethicsMode?: string;
+  /** Captured `api.enqueueNextTurnInjection` reference. Used by the
+   *  /inbox/inject mailbox endpoint (Fase F). Null when the host
+   *  gateway does not expose the seam — the endpoint returns 503. */
+  inboxEnqueue?: ((injection: {
+    sessionKey: string;
+    text: string;
+    idempotencyKey?: string;
+    placement?: "prepend_context" | "append_context";
+    ttlMs?: number;
+    metadata?: Record<string, unknown>;
+  }) => Promise<{ enqueued: boolean; id: string; sessionKey: string }>) | null;
   logger?: { info?: (m: string) => void; warn?: (m: string) => void };
 }
 
@@ -819,6 +830,91 @@ async function journalLineage(
   }
 }
 
+/** POST /api/celiums-cognition/inbox/inject
+ *  Mailbox bridge for inbound channels (Fase F, doctrine G4). External
+ *  plugins or services that own a channel adapter (Telegram, Slack,
+ *  webhook, etc.) POST a JSON body here to enqueue a note that the
+ *  target session sees at the top of its next turn.
+ *
+ *  Body: { sessionKey, text, idempotencyKey?, placement?, channel?, ttlMs? }
+ *
+ *  Returns 503 when the gateway lacks `api.enqueueNextTurnInjection`
+ *  (older builds) so the caller can fall back gracefully. */
+async function inboxInject(
+  ctx: UiRouterContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (req.method !== "POST") {
+    return sendError(res, 405, "METHOD_NOT_ALLOWED", `${req.method} not allowed`);
+  }
+  if (!ctx.inboxEnqueue) {
+    return sendError(
+      res,
+      503,
+      "UNAVAILABLE",
+      "gateway does not expose enqueueNextTurnInjection on this build",
+    );
+  }
+  let body = "";
+  for await (const chunk of req) body += chunk;
+  // 64 KB cap on inbox bodies — channel notices should be short.
+  if (body.length > 64 * 1024) {
+    return sendError(res, 413, "PAYLOAD_TOO_LARGE", "body exceeds 64 KB");
+  }
+  let payload: {
+    sessionKey?: unknown;
+    text?: unknown;
+    idempotencyKey?: unknown;
+    placement?: unknown;
+    channel?: unknown;
+    ttlMs?: unknown;
+  };
+  try {
+    payload = JSON.parse(body || "{}");
+  } catch {
+    return sendError(res, 400, "INVALID_JSON", "request body is not valid JSON");
+  }
+  if (typeof payload.sessionKey !== "string" || !payload.sessionKey) {
+    return sendError(res, 400, "INVALID_PAYLOAD", "sessionKey (string) required");
+  }
+  if (typeof payload.text !== "string" || !payload.text) {
+    return sendError(res, 400, "INVALID_PAYLOAD", "text (string) required");
+  }
+  const placement =
+    payload.placement === "append_context" ? "append_context" : "prepend_context";
+  try {
+    const result = await ctx.inboxEnqueue({
+      sessionKey: payload.sessionKey,
+      text: payload.text,
+      ...(typeof payload.idempotencyKey === "string"
+        ? { idempotencyKey: payload.idempotencyKey }
+        : {}),
+      placement,
+      ...(typeof payload.ttlMs === "number" ? { ttlMs: payload.ttlMs } : {}),
+      metadata: {
+        source: "celiums-cognition.inbox",
+        ...(typeof payload.channel === "string" && payload.channel
+          ? { channel: payload.channel }
+          : {}),
+      },
+    });
+    sendJson(res, 200, {
+      ok: true,
+      enqueued: result.enqueued,
+      id: result.id,
+      session_key: result.sessionKey,
+    });
+  } catch (err) {
+    sendError(
+      res,
+      500,
+      "ENQUEUE_FAILED",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
 /** GET /api/celiums-cognition/operator-status
  *  Returns the four cognition metrics surfaced by Fase D's control UI
  *  descriptor: context usage %, journal head (id+hash+time), ethics
@@ -1361,6 +1457,7 @@ export interface UiRoutes {
   journalAgents: UiRouteHandler;
   journalLineage: UiRouteHandler;
   operatorStatus: UiRouteHandler;
+  inboxInject: UiRouteHandler;
   ethicsEvents: UiRouteHandler;
   activitySparklines: UiRouteHandler;
   activityRecent: UiRouteHandler;
@@ -1395,6 +1492,8 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
       journalLineage(ctx, req, res),
     operatorStatus: (req: IncomingMessage, res: ServerResponse) =>
       operatorStatus(ctx, req, res),
+    inboxInject: (req: IncomingMessage, res: ServerResponse) =>
+      inboxInject(ctx, req, res),
     ethicsEvents: (req: IncomingMessage, res: ServerResponse) =>
       ethicsEvents(ctx, req, res),
     activitySparklines: (req: IncomingMessage, res: ServerResponse) =>
@@ -1460,6 +1559,16 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
       }
       if (!(await requireActiveSession(req, res))) return;
       return h.settingsTimezone(req, res);
+    }
+
+    // Inbox bridge — POST only, gated by active session. Fase F (G4
+    // mailbox bridge). Handled before the GET-only gate.
+    if (p === "/inbox/inject") {
+      if (req.method !== "POST") {
+        return sendError(res, 405, "METHOD_NOT_ALLOWED", `${req.method} not allowed`);
+      }
+      if (!(await requireActiveSession(req, res))) return;
+      return h.inboxInject(req, res);
     }
 
     if (req.method !== "GET") {

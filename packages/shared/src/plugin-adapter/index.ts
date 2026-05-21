@@ -80,6 +80,13 @@ import {
   type ActionDeps,
 } from "./operator-actions.js";
 import { resolveToolMetadata } from "./tool-metadata.js";
+import {
+  composeHeartbeatSnapshot,
+  decideToolResultJournal,
+  writeToolResultJournal,
+  type AutonomyDeps,
+  type EnqueueNextTurnInjectionFn,
+} from "./autonomy.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -1466,6 +1473,97 @@ export function createCognitionPlugin(edition: EditionOptions) {
         );
       }
 
+      // ── Fase F: autonomy + channel surface ─────────────────────────────
+      // Three pieces wired here:
+      //   (1) heartbeat_prompt_contribution — proactive ticks see a
+      //       state snapshot, not a fabricated result (G2).
+      //   (2) tool_result_persist — auto-trace tool outcomes with
+      //       throttled writes during loops (I5).
+      //   (3) inbox enqueue — captured here for the /inbox/inject HTTP
+      //       endpoint to use. Channels external to this plugin push
+      //       through the mailbox; nothing flows directly into UI or
+      //       shared state (G4).
+      //
+      // Verified shapes (openclaw@2026.5.19-beta.1):
+      //   PluginHeartbeatPromptContributionEvent / Result
+      //   PluginHookToolResultPersistEvent / Result
+      //   enqueueNextTurnInjection: PluginNextTurnInjection → enqueue result
+      const autonomyDeps: AutonomyDeps = {
+        getEngine,
+        extractPool: extractEnginePool as never,
+        userId,
+        agentId: cfg.agentId,
+        ethicsMode: (cfg as { ethics?: { mode?: string } }).ethics?.mode ?? "radar",
+        logger: {
+          info: (m: string) => api.logger.info(m),
+          warn: (m: string) => api.logger.warn?.(m),
+        },
+      };
+
+      // (1) Heartbeat snapshot — L1/G2: pure read of state, no
+      // fabricated predictions. Every line cites a concrete pg row.
+      api.on(
+        "heartbeat_prompt_contribution",
+        async (event: { sessionKey?: string; heartbeatName?: string }, hookCtx: { agentId?: string }) => {
+          try {
+            const snapshot = await composeHeartbeatSnapshot({
+              ...autonomyDeps,
+              agentId: hookCtx?.agentId ?? autonomyDeps.agentId,
+            });
+            if (!snapshot) return undefined;
+            api.logger.info(
+              `celiums-cognition: heartbeat snapshot · ${(event.heartbeatName ?? "default")} · agent=${hookCtx?.agentId ?? autonomyDeps.agentId}`,
+            );
+            return { prependContext: snapshot };
+          } catch (err) {
+            api.logger.warn?.(
+              `celiums-cognition: heartbeat snapshot failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            return undefined;
+          }
+        },
+      );
+
+      // (2) tool_result_persist — auto-trace with I5 throttle. The
+      // hook MUST be fast (it runs on every tool result); we do the
+      // throttle decision synchronously in-memory and fire-and-forget
+      // the write so we never delay the agent loop.
+      api.on(
+        "tool_result_persist",
+        (event: { toolName?: string; toolCallId?: string; isSynthetic?: boolean }, hookCtx: { agentId?: string }) => {
+          const aid = hookCtx?.agentId ?? autonomyDeps.agentId;
+          const decision = decideToolResultJournal(aid, event);
+          if (!decision) return undefined;
+          // Fire-and-forget: do not await; tool persistence path is hot.
+          void writeToolResultJournal(
+            { ...autonomyDeps, agentId: aid },
+            decision,
+          ).catch(() => { /* logged inside writer */ });
+          return undefined;
+        },
+      );
+
+      // (3) Capture enqueueNextTurnInjection for the /inbox/inject
+      // endpoint. Feature-detected; null when host lacks the seam.
+      let inboxEnqueue: EnqueueNextTurnInjectionFn | null = null;
+      const enqueueOnApi = (
+        api as unknown as { enqueueNextTurnInjection?: EnqueueNextTurnInjectionFn }
+      ).enqueueNextTurnInjection;
+      if (typeof enqueueOnApi === "function") {
+        inboxEnqueue = enqueueOnApi.bind(api) as EnqueueNextTurnInjectionFn;
+        api.logger.info(
+          `celiums-cognition: inbox bridge ready (enqueueNextTurnInjection captured)`,
+        );
+      } else {
+        api.logger.warn?.(
+          `celiums-cognition: api.enqueueNextTurnInjection not available — /inbox/inject will return 503`,
+        );
+      }
+      // Stash on the UI context the router builder will read.
+      const inboxEnqueueRef: { current: EnqueueNextTurnInjectionFn | null } = {
+        current: inboxEnqueue,
+      };
+
       // ── Service + CLI ──────────────────────────────────────────────────
       // service.start fallback: if the edition declared bootstrap and the
       // required listeners aren't up, run bootstrap idempotently. Only
@@ -1570,6 +1668,7 @@ export function createCognitionPlugin(edition: EditionOptions) {
             installedAt: process.env.CELIUMS_PLUGIN_INSTALLED_AT,
             agentId: cfg.agentId,
             ethicsMode: (cfg as { ethics?: { mode?: string } }).ethics?.mode ?? "radar",
+            inboxEnqueue: inboxEnqueueRef.current,
             logger: {
               info: (m: string) => api.logger.info(`${edition.id}: ui: ${m}`),
               warn: (m: string) => api.logger.warn?.(`${edition.id}: ui: ${m}`),
