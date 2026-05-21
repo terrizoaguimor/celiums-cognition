@@ -23,7 +23,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import * as net from "node:net";
 import { Pool } from "pg";
 import { makeAuthRouter, type AuthRouter } from "./auth-routes.js";
-import { buildMemoryPromptSupplement } from "./prompt-supplement/index.js";
+import {
+  buildMemoryPromptSupplement,
+  buildAgentIdentityPreamble,
+} from "./prompt-supplement/index.js";
 import { CURATED_TOOL_NAMES } from "./tool-curator/index.js";
 
 // ─── small helpers ─────────────────────────────────────────────────────
@@ -1020,6 +1023,24 @@ async function previewPrompt(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
+  try {
+    return await previewPromptImpl(ctx, req, res);
+  } catch (err) {
+    ctx.logger?.warn?.(`preview-prompt threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    if (!res.headersSent) {
+      sendError(
+        res, 500, "PREVIEW_ERROR",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+}
+
+async function previewPromptImpl(
+  ctx: UiRouterContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
   const q = parseQuery(req);
   const msg = q.get("msg")?.trim() || "qué hablamos ayer?";
   const toolsMode = q.get("tools") === "all" ? "all" : "curated";
@@ -1040,48 +1061,81 @@ async function previewPrompt(
       : new Set<string>(CURATED_TOOL_NAMES);
   const supplementLines = buildMemoryPromptSupplement(toolSet);
 
-  // Dynamic section — what `turnContext` would compose. We have to
-  // import the engine lazily here because ui-routes is engine-free
-  // and we don't want to add a hard dep just for this preview path.
-  let dynamic: { context: string; channels_loaded?: string[]; total_chars?: number } | null = null;
+  // Dynamic section — invoke the engine's turn_context composer. The
+  // runtime shape it returns is `{ prependContext: string }` — a single
+  // assembled block ready to inject into the system prompt. (The
+  // engine's TypeScript declaration claims `{ context, channels_loaded,
+  // total_chars }`, but the bundled handler emits prependContext; we
+  // mirror the runtime, not the type.)
+  let prependContext = "";
   let dynamicError: string | null = null;
+  // Also include the per-agent identity preamble — exactly what the
+  // before_prompt_build hook prepends on every real turn, so the
+  // preview matches reality.
+  const identity = buildAgentIdentityPreamble({
+    agentId: "preview-prompt",
+    sessionId: "preview-session",
+    conversationId: null,
+  });
   try {
     const mod = await import("@celiumsai/cognition-engine");
     const turnContext = (mod as { turnContext?: (i: unknown, c: unknown) => Promise<unknown> }).turnContext;
     if (typeof turnContext !== "function") {
       dynamicError = "engine.turnContext not exported by this build";
     } else {
-      const tc = await turnContext(
-        { user_message: msg, max_chars: 3000 },
+      // NB: the engine's handler reads `args.userMessage` (camelCase)
+      // even though the lib/proactive.ts TypeScript declares
+      // `user_message`. Pass BOTH to survive either path.
+      const tc = (await turnContext(
+        { user_message: msg, userMessage: msg, max_chars: 3000 } as never,
         {
           userId: ctx.userId,
-          capabilities: { opencore: true, fleet: false, atlas: false, ai: false },
+          // Match the real before_prompt_build hook's capability
+          // resolution so the channels that depend on env keys
+          // (continuity, ethics-LLM, atlas) actually fire.
+          capabilities: {
+            opencore: true,
+            fleet: !!process.env.CELIUMS_FLEET_API_KEY,
+            atlas: !!process.env.CELIUMS_ATLAS_API_KEY,
+            ai: !!process.env.CELIUMS_LLM_API_KEY,
+          },
           agentId: "preview-prompt",
           sessionId: `preview-${Date.now()}`,
           memoryEngine: ctx.engine,
           pool: ctx.pool,
         },
-      );
-      dynamic = tc as { context: string; channels_loaded?: string[]; total_chars?: number };
+      )) as { prependContext?: string; context?: string };
+      prependContext = String(tc?.prependContext ?? tc?.context ?? "");
     }
   } catch (err) {
     dynamicError = err instanceof Error ? err.message : String(err);
   }
 
+  // What an LLM would actually see on a real turn = identity + dynamic + static
+  // (the before_prompt_build hook prepends identity+turn_context; the SDK
+  // appends the static supplement separately into the system prompt).
+  const staticText = supplementLines.join("\n");
+  const composed = [identity, prependContext, staticText]
+    .filter((s) => s && s.trim().length > 0)
+    .join("\n\n");
+
   sendJson(res, 200, {
     user_message: msg,
     tools_mode: toolsMode,
+    identity_preamble: identity,
     static_supplement: {
       lines: supplementLines,
-      total_chars: supplementLines.join("\n").length,
+      total_chars: staticText.length,
     },
-    dynamic_turn_context: dynamic
-      ? {
-          context: dynamic.context,
-          channels_loaded: dynamic.channels_loaded ?? [],
-          total_chars: dynamic.total_chars ?? dynamic.context.length,
-        }
-      : { error: dynamicError ?? "(none)" },
+    dynamic_turn_context: {
+      prependContext,
+      total_chars: prependContext.length,
+      error: dynamicError,
+    },
+    composed: {
+      text: composed,
+      total_chars: composed.length,
+    },
   });
 }
 

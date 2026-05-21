@@ -472,9 +472,12 @@ export function createCognitionPlugin(edition: EditionOptions) {
               memoryEngine: engine,
               pool,
             };
+            // NB: the engine's handler reads args.userMessage (camelCase)
+            // even though lib/proactive.ts types it as `user_message`.
+            // Pass both keys to survive either resolution path.
             const tc = await withTimeout(
               turnContext(
-                { user_message: q, max_chars: 3000 },
+                { user_message: q, userMessage: q, max_chars: 3000 } as never,
                 ctx as never,
               ),
               AUTO_RECALL_TIMEOUT_MS,
