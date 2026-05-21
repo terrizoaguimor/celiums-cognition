@@ -193,7 +193,7 @@ export const ENV_GROUPS = [
   ]},
   { id: "seed", label: "Seed & corpus", icon: "✦", items: [
     { key: "CELIUMS_SEED_URL",     desc: "Curated 10k skills seed",       kind: "text",   placeholder: "https://celiums-seed-public.nyc3.digitaloceanspaces.com/seed/seed-skills-v1.sql.gz" },
-    { key: "KNOWLEDGE_API_URL",    desc: "Federate to full corpus",       kind: "text",   placeholder: "https://memory.celiums.ai" },
+    { key: "KNOWLEDGE_API_URL",    desc: "Federate to full corpus",       kind: "text",   placeholder: "https://your-memory-host" },
     { key: "KNOWLEDGE_API_KEY",    desc: "API key for federated corpus",  kind: "secret", placeholder: "ck_live_…" },
   ]},
   { id: "ethics", label: "Ethics pipeline", icon: "⚖", items: [
