@@ -2,7 +2,7 @@
  * Copyright 2026 Celiums Solutions LLC
  * Licensed under the Apache License, Version 2.0
  */
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   fetchHealth, fetchCounts, fetchPillars,
   fetchSparklines, fetchRecent, fetchVersionCheck,
@@ -228,9 +228,19 @@ function fmtTime(iso) {
   }
 }
 
-/* Agent state card — live PAD + circadian. Always refetches on mount. */
+/* Agent state card — live PAD + circadian. Refetches on mount AND
+ * every 15s so `local_hour` and `rhythm` track wall-clock instead of
+ * sticking to the initial snapshot (reported by Mario 2026-05-21:
+ * the time chip drifted by several minutes after the page was left
+ * open). The endpoint is cheap — two PG queries + an in-memory engine
+ * call — so a 15s cadence is comfortable. */
 export function AgentStateCard() {
   const stateQ = useQuery(fetchLimbicState, []);
+  const { refetch } = stateQ;
+  useEffect(() => {
+    const id = setInterval(() => refetch(), 15_000);
+    return () => clearInterval(id);
+  }, [refetch]);
   const data = stateQ.data;
   const mood = data?.mood;
   const c = data?.circadian;
