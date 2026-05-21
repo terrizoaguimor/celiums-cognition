@@ -37,6 +37,90 @@ const COOKIE_NAME = "celiums_sid";
 const RECOVERY_COUNT = 8;
 const TOTP_ISSUER = "Celiums Cognition";
 
+// ─── rate limiting ─────────────────────────────────────────────────────
+// In-memory sliding-window counter per (route, identifier). Process-local
+// — restart resets. Acceptable for a single-instance gateway plugin; the
+// real defense in depth is the cost of an attack across the window, not
+// any single restart bypass.
+//
+// Key shape: `${route}:${identifier}` where identifier is the client IP
+// for pre-session attempts (login, signup) or the session id for
+// post-credentials attempts (totp verify / login/totp).
+//
+// On exceed: 429 + Retry-After header so well-behaved clients back off.
+
+const rateLimitState = new Map<string, number[]>();
+
+interface RateLimitConfig {
+  /** Bucket key (route name). */
+  route: string;
+  /** Hard cap of attempts per window. */
+  max: number;
+  /** Window in seconds. */
+  windowSec: number;
+}
+
+function rateLimitCheck(
+  key: string,
+  cfg: RateLimitConfig,
+  nowMs: number = Date.now(),
+): { allowed: boolean; retryAfterSec: number; remaining: number } {
+  const cutoff = nowMs - cfg.windowSec * 1000;
+  const fullKey = `${cfg.route}:${key}`;
+  const hits = (rateLimitState.get(fullKey) ?? []).filter((t) => t > cutoff);
+  if (hits.length >= cfg.max) {
+    const oldest = hits[0];
+    const retryAfterSec = Math.max(1, Math.ceil((oldest + cfg.windowSec * 1000 - nowMs) / 1000));
+    // Keep the trimmed list so subsequent calls don't re-walk the whole
+    // history; don't extend it (the attempt was refused).
+    rateLimitState.set(fullKey, hits);
+    return { allowed: false, retryAfterSec, remaining: 0 };
+  }
+  hits.push(nowMs);
+  rateLimitState.set(fullKey, hits);
+  return { allowed: true, retryAfterSec: 0, remaining: cfg.max - hits.length };
+}
+
+/** Resolve the client IP for rate-limit bucketing. Honours
+ *  `x-forwarded-for` (Cloudflare/Traefik) and `cf-connecting-ip` —
+ *  spoofable in raw-internet, but we're behind cloudflared so the
+ *  upstream populates these. Falls back to socket.remoteAddress. */
+function clientIp(req: IncomingMessage): string {
+  const cf = (req.headers["cf-connecting-ip"] as string | undefined)?.split(",")[0]?.trim();
+  if (cf) return cf;
+  const xff = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
+  if (xff) return xff;
+  return req.socket?.remoteAddress ?? "unknown";
+}
+
+function sendRateLimit(res: ServerResponse, retryAfterSec: number, route: string): void {
+  res.setHeader("Retry-After", String(retryAfterSec));
+  sendError(
+    res, 429, "RATE_LIMITED",
+    `too many ${route} attempts — retry after ${retryAfterSec}s`,
+  );
+}
+
+/** Periodic cleanup so the Map doesn't grow unbounded under sustained
+ *  abuse (each unique IP creates an entry that lives at least one window).
+ *  Runs every 5 minutes; cheap.  */
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, hits] of rateLimitState.entries()) {
+    // Anything > 1 hour old is irrelevant for any of our buckets.
+    const fresh = hits.filter((t) => t > now - 3600 * 1000);
+    if (fresh.length === 0) rateLimitState.delete(key);
+    else rateLimitState.set(key, fresh);
+  }
+}, 300 * 1000).unref?.();
+
+// Per-route configs. Numbers tuned for "well-behaved client never
+// hits these; brute-force attacker eats real cost".
+const RL_SIGNUP:       RateLimitConfig = { route: "signup",       max: 3, windowSec: 3600 };  // 3/hour/IP
+const RL_LOGIN:        RateLimitConfig = { route: "login",        max: 5, windowSec: 900 };   // 5/15min/IP
+const RL_TOTP_VERIFY:  RateLimitConfig = { route: "totp_verify",  max: 5, windowSec: 300 };   // 5/5min/session
+const RL_LOGIN_TOTP:   RateLimitConfig = { route: "login_totp",   max: 5, windowSec: 300 };   // 5/5min/session
+
 // ─── helpers ───────────────────────────────────────────────────────────
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -368,6 +452,11 @@ async function authSignup(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
+  // Rate limit per IP — signup is single-shot in normal use; this
+  // caps an attacker spamming bogus signups (which also probes
+  // whether the account exists via the 409 vs 201 reply).
+  const rl = rateLimitCheck(clientIp(req), RL_SIGNUP);
+  if (!rl.allowed) return sendRateLimit(res, rl.retryAfterSec, "signup");
   let body: SignupBody;
   try {
     body = await readJsonBody<SignupBody>(req);
@@ -437,6 +526,11 @@ async function authTotpVerify(
   if (!sess) {
     return sendError(res, 401, "NO_SESSION", "no session");
   }
+  // Brute-forcing a 6-digit code = 1M tries; with window=±1 step we
+  // accept ~3 valid codes at any moment, so 1M/3 ≈ 333K tries to land.
+  // Cap at 5/5min so even sustained attack takes years.
+  const rl = rateLimitCheck(sess.session.id, RL_TOTP_VERIFY);
+  if (!rl.allowed) return sendRateLimit(res, rl.retryAfterSec, "totp_verify");
   if (sess.session.scope !== "pending_totp_setup") {
     return sendError(
       res,
@@ -470,6 +564,11 @@ async function authLogin(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
+  // Brute-force defense — 5 attempts per 15 minutes per IP. With a
+  // strong password (≥12 chars, mixed case, digits as the policy
+  // enforces) this makes online guessing effectively impossible.
+  const rl = rateLimitCheck(clientIp(req), RL_LOGIN);
+  if (!rl.allowed) return sendRateLimit(res, rl.retryAfterSec, "login");
   let body: { username?: unknown; password?: unknown };
   try {
     body = await readJsonBody(req);
@@ -533,6 +632,11 @@ async function authLoginTotp(
   if (!sess) {
     return sendError(res, 401, "NO_SESSION", "no session");
   }
+  // Same brute-force surface as totp_verify, but during a login flow
+  // (recovery codes also flow through here). Per-session bucket so
+  // the attacker can't trade IPs for tries.
+  const rl = rateLimitCheck(sess.session.id, RL_LOGIN_TOTP);
+  if (!rl.allowed) return sendRateLimit(res, rl.retryAfterSec, "login_totp");
   if (sess.session.scope !== "pending_totp_login") {
     return sendError(
       res,
