@@ -209,7 +209,7 @@ full bootstrap automatically:
    restricted to `127.0.0.1:<port>:<port>` (do not expose to the public
    interface — ufw on the host is not enough; docker bypasses iptables INPUT
    chain by default).
-4. **Bug fix from prod E2E (claw.celiums.io)**: hard `package.json` build
+4. **Bug fix from prod E2E (a private gateway VPS)**: hard `package.json` build
    script uses `cp -R src/compose dist/compose` which produces
    `dist/compose/compose/docker-compose.yml` (double-nested). Change to
    `cp -R src/compose/. dist/compose/` (or `rsync -a src/compose/ dist/compose/`)

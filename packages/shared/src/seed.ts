@@ -23,13 +23,12 @@
 //
 // Distribution model:
 //   - The free tier ships ~10-30K curated modules. Celiums maintains the
-//     full ~600K corpus behind a paid SaaS (memory.celiums.ai); operators
-//     who upgrade switch by setting KNOWLEDGE_API_URL + KNOWLEDGE_API_KEY
-//     + CELIUMS_KNOWLEDGE_ALLOW_HOSTED=true (see lib/module-store.ts).
+//     full ~600K corpus behind a paid SaaS; operators who upgrade switch
+//     by setting KNOWLEDGE_API_URL + KNOWLEDGE_API_KEY +
+//     CELIUMS_KNOWLEDGE_ALLOW_HOSTED=true (see lib/module-store.ts).
 //
 // Env vars consumed:
-//   CELIUMS_SEED_URL       base URL hosting manifest + tarball (e.g.
-//                           https://cdn.celiums.ai/seed)
+//   CELIUMS_SEED_URL       base URL hosting manifest + tarball
 //   CELIUMS_SEED_VERSION   which seed to apply (e.g. "v1"). Default: "v1".
 //   CELIUMS_SEED_SKIP      "true" to skip seeding entirely.
 //

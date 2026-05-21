@@ -13,8 +13,8 @@ This document inventoried the available seams, compared them against
 what the plugin already used, and proposed the prioritized adoption
 plan that was subsequently executed.
 
-Verified against `/Volumes/My Book/Documents/openclaw-study` (OpenClaw
-2026.5.18+), commit `78d226bb`.
+Verified against a local checkout of the `openclaw-study` SDK tree
+(OpenClaw 2026.5.18+, commit `78d226bb`).
 
 ---
 

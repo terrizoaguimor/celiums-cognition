@@ -2,7 +2,8 @@
 // memory-types/.ts. Idempotent: skips files that already carry the marker.
 // Preserves the file's existing `// SPDX-License-Identifier: Apache-2.0` lines.
 import { readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const HEADER = `/*
  * Copyright 2026 Celiums Solutions LLC
@@ -12,9 +13,13 @@ const HEADER = `/*
  */
 `;
 const MARKER = "Originally derived from celiums-memory v2.0";
+
+// Resolve repo root from this script's location so the runner works
+// for any operator (no user-specific absolute paths).
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ROOTS = [
-  "/Volumes/My Book/Documents/celiums-cognition/packages/engine/src",
-  "/Volumes/My Book/Documents/celiums-cognition/packages/memory-types/src",
+  join(REPO_ROOT, "packages", "engine", "src"),
+  join(REPO_ROOT, "packages", "memory-types", "src"),
 ];
 
 function* walk(dir) {
