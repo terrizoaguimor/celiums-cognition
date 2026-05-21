@@ -158,6 +158,14 @@ export interface UiRouterContext {
     appliedAt: string;
   };
   installedAt?: string;
+  /** Agent id this plugin runs under — passed through to /operator-status
+   *  so the journal-head lookup scopes correctly. Defaults to the
+   *  plugin's cfg.agentId. */
+  agentId?: string;
+  /** Active ethics mode (radar | enforce | silent | off). Surface for
+   *  /operator-status so the cognition widget chip shows the right
+   *  state. Falls back to "radar" when unset. */
+  ethicsMode?: string;
   logger?: { info?: (m: string) => void; warn?: (m: string) => void };
 }
 
@@ -811,6 +819,54 @@ async function journalLineage(
   }
 }
 
+/** GET /api/celiums-cognition/operator-status
+ *  Returns the four cognition metrics surfaced by Fase D's control UI
+ *  descriptor: context usage %, journal head (id+hash+time), ethics
+ *  mode, recall count for last turn. The same payload is returned by
+ *  the `celiums.status` session action so the shell widget and the
+ *  dashboard widget read identical values.
+ *
+ *  context_usage_pct and recall_count_last_turn are null when the host
+ *  hasn't supplied the underlying signals (G2: a visible "—" beats a
+ *  fabricated number). */
+async function operatorStatus(
+  ctx: UiRouterContext,
+  _req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const agentId = ctx.agentId ?? "celiums-cognition";
+  const ethicsMode = ctx.ethicsMode ?? "radar";
+  let journal_head:
+    | { id: string; hash: string; written_at: string }
+    | null = null;
+  try {
+    const { rows } = await ctx.pool.query(
+      `SELECT id, hash, written_at
+         FROM agent_journal
+        WHERE agent_id = $1
+        ORDER BY written_at DESC
+        LIMIT 1`,
+      [agentId],
+    );
+    if (rows[0]) {
+      const w = rows[0].written_at;
+      journal_head = {
+        id: String(rows[0].id),
+        hash: String(rows[0].hash),
+        written_at: w instanceof Date ? w.toISOString() : String(w ?? ""),
+      };
+    }
+  } catch (err) {
+    return sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
+  }
+  sendJson(res, 200, {
+    context_usage_pct: null,
+    journal_head,
+    ethics_mode: ethicsMode,
+    recall_count_last_turn: null,
+  });
+}
+
 /** GET /api/celiums-cognition/ethics/events
  *  Audit-log entries from the ethics pipeline. ?decision=block|flag|allow|all
  *  ?law=1|2|3 (Three Laws) optional. */
@@ -1304,6 +1360,7 @@ export interface UiRoutes {
   journalRecent: UiRouteHandler;
   journalAgents: UiRouteHandler;
   journalLineage: UiRouteHandler;
+  operatorStatus: UiRouteHandler;
   ethicsEvents: UiRouteHandler;
   activitySparklines: UiRouteHandler;
   activityRecent: UiRouteHandler;
@@ -1336,6 +1393,8 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
       journalAgents(ctx, req, res),
     journalLineage: (req: IncomingMessage, res: ServerResponse) =>
       journalLineage(ctx, req, res),
+    operatorStatus: (req: IncomingMessage, res: ServerResponse) =>
+      operatorStatus(ctx, req, res),
     ethicsEvents: (req: IncomingMessage, res: ServerResponse) =>
       ethicsEvents(ctx, req, res),
     activitySparklines: (req: IncomingMessage, res: ServerResponse) =>
@@ -1425,6 +1484,7 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
     if (p === "/journal/recent") return h.journalRecent(req, res);
     if (p === "/journal/agents") return h.journalAgents(req, res);
     if (p === "/journal/lineage") return h.journalLineage(req, res);
+    if (p === "/operator-status") return h.operatorStatus(req, res);
     if (p === "/ethics/events") return h.ethicsEvents(req, res);
     if (p === "/activity/sparklines") return h.activitySparklines(req, res);
     if (p === "/activity/recent") return h.activityRecent(req, res);

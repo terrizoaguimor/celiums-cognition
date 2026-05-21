@@ -74,6 +74,11 @@ import {
   DEFAULT_SESSION_CONFIG,
   type SessionConfig,
 } from "./sessions.js";
+import {
+  buildOperatorActions,
+  COGNITION_STATUS_DESCRIPTOR,
+  type ActionDeps,
+} from "./operator-actions.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -829,6 +834,79 @@ export function createCognitionPlugin(edition: EditionOptions) {
         ),
       );
 
+      // ── Fase D: operator actions + control UI ──────────────────────────
+      // Operator-side slash commands and a status widget. The agent does
+      // not invoke these — the operator does, via the OpenClaw shell
+      // (slash-command surface or button). Feature-detected so the
+      // plugin runs on older gateways without these seams.
+      //
+      // Doctrine citations:
+      //   - T3: actions declared as data; handlers lazy via factory
+      //   - U4: forget is a typed permission request (mandatory reason)
+      //   - U5: status surfaces exactly four critical metrics
+      //   - U6: forget arms first, executes on confirm within 10s
+      //   - G2: recall result never fabricates — 0 hits cites recovery path
+      const actionDeps: ActionDeps = {
+        getEngine,
+        extractPool: extractEnginePool as never,
+        userId,
+        agentId: cfg.agentId,
+        ethicsMode: (cfg as { ethics?: { mode?: string } }).ethics?.mode ?? "radar",
+        logger: {
+          info: (m: string) => api.logger.info(m),
+          warn: (m: string) => api.logger.warn?.(m),
+        },
+      };
+      const operatorActions = buildOperatorActions(actionDeps);
+
+      const registerSessionAction = (
+        api as unknown as {
+          registerSessionAction?: (action: unknown) => void;
+        }
+      ).registerSessionAction;
+      if (typeof registerSessionAction === "function") {
+        for (const action of operatorActions) {
+          try {
+            registerSessionAction.call(api, action);
+            api.logger.info(
+              `celiums-cognition: registered session action ${action.id}`,
+            );
+          } catch (err) {
+            api.logger.warn?.(
+              `celiums-cognition: failed to register action ${action.id}: ` +
+              (err instanceof Error ? err.message : String(err)),
+            );
+          }
+        }
+      } else {
+        api.logger.warn?.(
+          `celiums-cognition: api.registerSessionAction not available — operator slash commands skipped on this gateway`,
+        );
+      }
+
+      const registerControlUiDescriptor = (
+        api as unknown as {
+          registerControlUiDescriptor?: (descriptor: unknown) => void;
+        }
+      ).registerControlUiDescriptor;
+      if (typeof registerControlUiDescriptor === "function") {
+        try {
+          registerControlUiDescriptor.call(api, COGNITION_STATUS_DESCRIPTOR);
+          api.logger.info(
+            `celiums-cognition: registered control UI descriptor (${COGNITION_STATUS_DESCRIPTOR.id})`,
+          );
+        } catch (err) {
+          api.logger.warn?.(
+            `celiums-cognition: failed to register control UI descriptor: ` +
+            (err instanceof Error ? err.message : String(err)),
+          );
+        }
+      } else {
+        api.logger.warn?.(
+          `celiums-cognition: api.registerControlUiDescriptor not available — cognition widget skipped on this gateway`,
+        );
+      }
+
       // ── Memory prompt supplement (cache-stable system-prompt section) ──
       // Teaches the model HOW to operate the cognitive surface this
       // plugin exposes — when to call each tool, how to read the affect
@@ -1324,6 +1402,8 @@ export function createCognitionPlugin(edition: EditionOptions) {
               edition: (edition.id.endsWith("-lite") ? "lite" : "hard") as "hard" | "lite",
             },
             installedAt: process.env.CELIUMS_PLUGIN_INSTALLED_AT,
+            agentId: cfg.agentId,
+            ethicsMode: (cfg as { ethics?: { mode?: string } }).ethics?.mode ?? "radar",
             logger: {
               info: (m: string) => api.logger.info(`${edition.id}: ui: ${m}`),
               warn: (m: string) => api.logger.warn?.(`${edition.id}: ui: ${m}`),
