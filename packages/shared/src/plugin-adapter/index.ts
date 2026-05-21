@@ -20,9 +20,11 @@ import {
   buildModuleStore,
   ethics,
   makeMigrationsRunner,
+  journalWrite,
   type CeliumsMemoryConfig,
   type MemoryEngineWithStore,
   type ModuleStore,
+  type JournalEntryType,
 } from "@celiumsai/cognition-engine";
 import { parseConfig, type CognitionConfig } from "../config-schema/index.js";
 import { selectTools, CURATED_TOOL_NAMES, type EngineToolLike } from "../tool-curator/index.js";
@@ -197,27 +199,69 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
   ]);
 }
 
+/** Extract free text from a message's `content` — handles plain strings,
+ *  Anthropic-style content blocks ({type:"text",text}), and OpenAI-style
+ *  string-only content. Returns "" when no text is present (e.g. content
+ *  is exclusively tool calls). */
+function extractText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (!part || typeof part !== "object") return "";
+      const p = part as Record<string, unknown>;
+      if ("text" in p && typeof p.text === "string") return p.text;
+      return "";
+    })
+    .join(" ")
+    .trim();
+}
+
 /** Best-effort extraction of the latest user-authored text from a messages array. */
 function latestUserText(messages: unknown): string | undefined {
   if (!Array.isArray(messages)) return undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i] as Record<string, unknown> | undefined;
     if (!m || m.role !== "user") continue;
-    const c = m.content;
-    if (typeof c === "string" && c.trim()) return c;
-    if (Array.isArray(c)) {
-      const text = c
-        .map((part) =>
-          part && typeof part === "object" && "text" in part
-            ? String((part as { text: unknown }).text ?? "")
-            : "",
-        )
-        .join(" ")
-        .trim();
-      if (text) return text;
-    }
+    const text = extractText(m.content).trim();
+    if (text) return text;
   }
   return undefined;
+}
+
+/** Best-effort extraction of the latest assistant text from a messages array. */
+function latestAssistantText(messages: unknown): string | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as Record<string, unknown> | undefined;
+    if (!m || m.role !== "assistant") continue;
+    const text = extractText(m.content).trim();
+    if (text) return text;
+  }
+  return undefined;
+}
+
+/** Count tool-use blocks across all messages. Works for both Anthropic
+ *  content blocks ({type:"tool_use"|"tool_result"}) and OpenAI's
+ *  message-level `tool_calls`/`tool_call_id` shapes. */
+function countToolCalls(messages: unknown): number {
+  if (!Array.isArray(messages)) return 0;
+  let n = 0;
+  for (const m of messages) {
+    if (!m || typeof m !== "object") continue;
+    const msg = m as Record<string, unknown>;
+    // OpenAI style: assistant message carries `tool_calls: []`
+    if (Array.isArray(msg.tool_calls)) n += msg.tool_calls.length;
+    // Anthropic style: content blocks contain { type: "tool_use" }
+    if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block && typeof block === "object" && (block as Record<string, unknown>).type === "tool_use") {
+          n += 1;
+        }
+      }
+    }
+  }
+  return n;
 }
 
 export function createCognitionPlugin(edition: EditionOptions) {
@@ -383,6 +427,99 @@ export function createCognitionPlugin(edition: EditionOptions) {
               await engine.store([{ content: text, userId } as never]);
             } catch (err) {
               api.logger.warn(`celiums-cognition: auto-capture failed: ${String(err)}`);
+            }
+          },
+        );
+      }
+
+      // ── Auto-journal (agent_end → agent_journal) ───────────────────────
+      // Mario's call (2026-05-20): the journal can't be left as a manual
+      // tool — the agent has to be RAILED into writing entries so it can
+      // come back to its own steps. Every meaningful turn closes with a
+      // journal_write here. "Meaningful" = the user message clears
+      // minTurnLength and the agent actually responded.
+      //
+      // Heuristic for entry_type (cheap — no LLM call):
+      //   - tool calls happened → "decision" (the agent committed to an action)
+      //   - assistant length >> user length → "reflection" (the agent ELABORATED)
+      //   - event.success === false (rare on agent_end) → "doubt"
+      //   - default → "reflection"
+      // The agent can always supersede or refine via journal_supersede later.
+      if (cfg.journal.enabled && cfg.journal.autoWrite.enabled) {
+        api.on(
+          "agent_end",
+          async (
+            event: {
+              success?: boolean;
+              messages?: unknown;
+              prompt?: string;
+              agentId?: string;
+            },
+            ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
+          ) => {
+            const userText = latestUserText(event.messages) ?? event.prompt ?? "";
+            const assistantText = latestAssistantText(event.messages) ?? "";
+            const toolCalls = countToolCalls(event.messages);
+            // Skip pings ("ok", "gracias", short ack) — minTurnLength gates this.
+            if (userText.trim().length < cfg.journal.autoWrite.minTurnLength) return;
+            // Skip if the agent didn't produce anything substantial either.
+            if (assistantText.trim().length < 20) return;
+
+            // entry_type heuristic
+            let entryType: JournalEntryType = "reflection";
+            if (event.success === false) {
+              entryType = "doubt";
+            } else if (toolCalls >= 2) {
+              entryType = "decision";
+            } else if (assistantText.length > userText.length * 4) {
+              entryType = "reflection";
+            }
+
+            // valence heuristic: success → mildly positive, failure → mildly
+            // negative. The agent's own future journal_write calls will
+            // override with finer-grained values when it explicitly reflects.
+            const valence = event.success === false ? -0.3 : 0.2;
+
+            // Content snapshot — cheap structured prose the operator can
+            // grep. Trimmed so a long turn doesn't bloat the journal.
+            const content = [
+              `User: ${userText.slice(0, 600)}${userText.length > 600 ? "…" : ""}`,
+              `Agent (${toolCalls} tool call${toolCalls === 1 ? "" : "s"}): ${assistantText.slice(0, 800)}${assistantText.length > 800 ? "…" : ""}`,
+            ].join("\n\n");
+
+            try {
+              const engine = await getEngine();
+              const pool = extractEnginePool(engine);
+              if (!pool) return;
+              await journalWrite(
+                {
+                  entry_type: entryType,
+                  content,
+                  valence,
+                  valence_reason: event.success === false ? "agent turn ended with success=false" : "agent turn closed",
+                  tags: ["auto", "agent_end", ...(toolCalls > 0 ? ["with-tools"] : [])],
+                  visibility: "self",
+                  conversation_id: ctx.sessionId ?? ctx.sessionKey,
+                  agent_id: ctx.agentId ?? event.agentId ?? cfg.agentId,
+                },
+                {
+                  userId,
+                  capabilities: {
+                    opencore: true as const,
+                    fleet: false,
+                    atlas: false,
+                    ai: false,
+                  },
+                  agentId: ctx.agentId ?? event.agentId ?? cfg.agentId,
+                  sessionId: ctx.sessionId ?? ctx.sessionKey,
+                  pool,
+                } as never,
+              );
+            } catch (err) {
+              // Best-effort — the auto-journal must never break the turn.
+              api.logger.warn?.(
+                `celiums-cognition: auto-journal failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
             }
           },
         );

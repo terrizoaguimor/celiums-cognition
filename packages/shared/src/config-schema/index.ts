@@ -18,7 +18,19 @@ export interface CognitionConfig {
   agentId: string;
   userId?: string;
   ethics: { enabled: boolean; strictMode: boolean };
-  journal: { enabled: boolean };
+  journal: {
+    enabled: boolean;
+    /** Auto-write a journal entry at the end of each meaningful agent
+     *  turn (Mario 2026-05-20: "hay que forzar entradas para que la AI
+     *  sepa volver sobre sus propios pasos"). Off by default for Lite,
+     *  on by default for Hard. */
+    autoWrite: {
+      enabled: boolean;
+      /** Minimum length of the user message to consider the turn
+       *  worth journalling. Filters out "ok" / "gracias" / short pings. */
+      minTurnLength: number;
+    };
+  };
   autoRecall: { enabled: boolean; trivialSkipRegex: string };
   autoCapture: { enabled: boolean; minImportance: number };
   dreaming: { enabled: boolean };
@@ -51,6 +63,14 @@ export const BASE_CONFIG_SCHEMA = {
       additionalProperties: false,
       properties: {
         enabled: { type: "boolean", default: true },
+        autoWrite: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            enabled: { type: "boolean", default: true },
+            minTurnLength: { type: "number", default: 40 },
+          },
+        },
       },
     },
     autoRecall: {
@@ -115,7 +135,13 @@ export function parseConfig(raw: unknown): CognitionConfig {
   const cfg: CognitionConfig = {
     agentId: str(c.agentId, "main"),
     ethics: { enabled: bool(ethics.enabled, true), strictMode: bool(ethics.strictMode, false) },
-    journal: { enabled: bool(journal.enabled, true) },
+    journal: {
+      enabled: bool(journal.enabled, true),
+      autoWrite: {
+        enabled: bool(obj(journal.autoWrite).enabled, true),
+        minTurnLength: num(obj(journal.autoWrite).minTurnLength, 40),
+      },
+    },
     autoRecall: {
       enabled: bool(autoRecall.enabled, true),
       trivialSkipRegex: str(autoRecall.trivialSkipRegex, DEFAULT_TRIVIAL_SKIP_REGEX),
