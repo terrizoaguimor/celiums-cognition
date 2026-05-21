@@ -3,6 +3,43 @@
 A five-layer pipeline that runs on every prompt and every tool call.
 Designed to fail safe and to keep its reasoning visible.
 
+## At a glance
+
+```
+   prompt / tool call
+          │
+          ▼
+   ┌──────────────────┐     fires every request
+   │ A — Lexicon      │     regex + semantic classifier · ~18ms p50
+   └──────┬───────────┘     emits flags, can short-circuit block
+          │
+          ▼
+   ┌──────────────────┐     conditional on:
+   │ B — CVaR         │     · CELIUMS_ATLAS_API_KEY set
+   └──────┬───────────┘     · Layer-A arousal > threshold
+          │                  Conditional Value-at-Risk on per-token risk
+          ▼
+   ┌──────────────────┐     conditional on:
+   │ C — Frameworks   │     · AI evaluator function provided
+   └──────┬───────────┘     Deontological + utilitarian + virtue + care
+          │                  vote independently; convergence recorded
+          ▼
+   ┌──────────────────┐     conditional on:
+   │ K — Corpus       │     · Layer-A lexicon fired (precedent check), OR
+   └──────┬───────────┘     · Layer-A silent on substantive content
+          │                  Retrieves from ethics_knowledge; SOFT-ALLOW
+          ▼                  override or HARD-DENY escalate
+   ┌──────────────────┐
+   │ Audit (always)   │     appends ethics_audit row — decision, layer
+   └──────────────────┘     trace, action_attempted (≤2KB), content_hash
+```
+
+Most prompts exit after Layer A: a clean lexicon pass + audit row.
+Only ambiguous content drops into B/C/K. The pipeline is a **radar,
+not a jail** — Layer K never flips Layer A's enforcement decision;
+it adds advisory signals to the audit trail so the operator can
+see when the system was uncertain.
+
 ## The pipeline
 
 ```
