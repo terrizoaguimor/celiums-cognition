@@ -9,10 +9,14 @@
 openclaw plugins install clawhub:@celiumsai/cognition
 ```
 
-That's the entire install. The plugin auto-bootstraps its Postgres +
-Qdrant + Valkey stack via Docker on first start, mints a unique
-database password (chmod 600), applies migrations, and is ready when
-the gateway is. No manual setup step, no SaaS, no required keys.
+That's the entire install. On first start, the plugin auto-bootstraps
+a four-container stack (Postgres + Qdrant + Valkey + OpenSearch) via
+Docker, mints a unique database password (chmod 600), applies the
+engine migrations, downloads the curated **10K-skills seed** (SHA-256
+verified) into Postgres, and bulk-indexes the **ethics corpus**
+(~1857 docs, 1024-dim embeddings, SHA-256 verified) into OpenSearch.
+By the time the gateway reports ready, every layer of the plugin is
+populated. No manual setup step, no SaaS, no required keys.
 
 ---
 
@@ -48,7 +52,7 @@ openclaw plugins install clawhub:@celiumsai/cognition
 
 # 2. Verify the stack is up
 curl -s http://localhost:18789/api/celiums-cognition/health | jq .stack
-# postgres: ok | qdrant: ok | valkey: ok | tei: ok
+# postgres: ok | qdrant: ok | valkey: ok | opensearch: ok (ethics_corpus_docs ~1857) | tei: ok
 
 # 3. Open the dashboard
 open http://localhost:18789/plugins/celiums-cognition/
@@ -79,8 +83,16 @@ The plugin honours these env vars at start (all optional):
 | `CELIUMS_DATABASE_URL` | derived from `~/.celiums-cognition/credentials.env` | Postgres connection URL |
 | `CELIUMS_QDRANT_URL` | `http://localhost:6333` | Qdrant HTTP endpoint |
 | `CELIUMS_VALKEY_URL` | `redis://localhost:6379` | Valkey / Redis cache |
+| `OPENSEARCH_URL` | `http://127.0.0.1:9200` | Ethics-corpus index host |
+| `ETHICS_INDEX` | `ethics_knowledge` | OpenSearch index name |
 | `TEI_URL` | `http://localhost:8080` | Text-Embeddings-Inference |
 | `CELIUMS_EMBEDDING_DIM` | `1024` | Must match TEI output |
+| `CELIUMS_SEED_URL` | `https://celiums-seed-public.nyc3.digitaloceanspaces.com/seed` | Skills seed manifest + tarball base URL |
+| `CELIUMS_SEED_VERSION` | `v1` | Skills seed version label |
+| `CELIUMS_SEED_SKIP` | unset | Set `true` to skip the skills seed (`forage` returns empty until populated) |
+| `CELIUMS_ETHICS_CORPUS_URL` | celiums-memory v2.0.0 GitHub release asset | Ethics corpus jsonl |
+| `CELIUMS_ETHICS_CORPUS_SHA256` | known sha of the v2.0.0 asset | Tamper protection |
+| `CELIUMS_ETHICS_CORPUS_SKIP` | unset | Set `true` to skip the ethics corpus load (Layer D abstains) |
 | `CELIUMS_TRUST_PROXY_HEADERS` | unset | Set `true` only when the gateway sits behind a reverse proxy you control |
 | `TZ` | host's `/etc/timezone` | Container + process timezone |
 

@@ -55,6 +55,11 @@ export interface EditionOptions {
   enableUiRoutes?: boolean;
   uiStaticDir?: string;
   pluginVersion?: string;
+  /** Optional ethics corpus loader options. When provided, the service
+   *  wiring downloads the corpus + bulk-indexes it into OpenSearch on
+   *  first start (idempotent). Falls back to ethicsCorpusOptionsFromEnv
+   *  when omitted; null disables the loader. */
+  ethicsCorpusOptions?: unknown;
 }
 
 // ─── context shape ─────────────────────────────────────────────────────

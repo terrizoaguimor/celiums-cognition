@@ -73,17 +73,38 @@ const HARD_UI = {
 
 const { schema, uiHints } = withEditionProps(HARD_PROPS, HARD_UI);
 
+// Auto-bootstrap defaults for the curated assets that ship with this
+// edition. Operators can override by exporting the env vars before the
+// gateway starts; if unset, the bundled stack is the target.
+//
+// SEED_URL → 10K curated skills corpus, downloaded via SeedManager and
+//            applied to the bundled Postgres. SHA-256 verified.
+// OPENSEARCH_URL → ethics_knowledge index, populated by EthicsCorpusLoader
+//            from the celiums-memory GitHub release asset (~1857 docs,
+//            1024-dim embeddings precomputed; SHA-256 verified).
+//
+// The auto-defaults make `openclaw plugins install` a one-shot end-to-
+// end install: docker stack up + migrations + skills seed + ethics
+// corpus, all idempotent, all SHA-pinned.
+if (!process.env.CELIUMS_SEED_URL) {
+  process.env.CELIUMS_SEED_URL =
+    "https://celiums-seed-public.nyc3.digitaloceanspaces.com/seed";
+}
+if (!process.env.OPENSEARCH_URL) {
+  process.env.OPENSEARCH_URL = "http://127.0.0.1:9200";
+}
+
 export default createCognitionPlugin({
   id: "celiums-cognition",
   name: "Celiums Cognition",
   description:
-    "Persistent emotional memory for OpenClaw — Hard (Postgres + Qdrant + Valkey).",
+    "Persistent emotional memory for OpenClaw — Hard (Postgres + Qdrant + Valkey + OpenSearch).",
   configSchema: { schema, uiHints },
   resolveEngineConfig: () => {
-    // Hard = full triple-store. Endpoints come from env (defaults match the
-    // bundled docker-compose service ports). Presence of databaseUrl/qdrantUrl
-    // makes the engine pick MemoryStore (PG+Qdrant+Valkey) — verified
-    // createMemoryEngine() auto-detection.
+    // Hard = full triple-store + ethics corpus. Endpoints come from env
+    // (defaults match the bundled docker-compose service ports). Presence
+    // of databaseUrl/qdrantUrl makes the engine pick MemoryStore
+    // (PG+Qdrant+Valkey) — verified createMemoryEngine() auto-detection.
     const databaseUrl =
       process.env.CELIUMS_DATABASE_URL ??
       databaseUrlFromCredentialsFile() ??
@@ -118,10 +139,10 @@ export default createCognitionPlugin({
   pluginVersion: "0.1.0",
   bootstrap: async (_engineCfg, _api) => {
     // The shared adapter only calls this when the local listeners (5432,
-    // 6333, 6379) are NOT responding. setup() runs `docker compose up
-    // -d --wait` against dist/compose/docker-compose.yml; the compose
-    // file binds to 127.0.0.1 (commit 66f2e50). Idempotent — if the
-    // stack is already up, compose is a no-op.
+    // 6333, 6379, 9200) are NOT responding. setup() runs `docker
+    // compose up -d --wait` against dist/compose/docker-compose.yml;
+    // the compose file binds every service to 127.0.0.1. Idempotent —
+    // if the stack is already up, compose is a no-op.
     const code = await setup();
     if (code !== 0) {
       throw new Error(`celiums-cognition stack bootstrap exited with code ${code}`);

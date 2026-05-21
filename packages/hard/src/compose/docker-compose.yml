@@ -78,7 +78,50 @@ services:
       timeout: 5s
       retries: 20
 
+  # OpenSearch single-node — backs the ethics knowledge corpus
+  # (~1857 docs, 1024-dim embeddings, hybrid BM25 + k-NN search).
+  # Layer D of the ethics pipeline consults this index; without it
+  # Layer D abstains cleanly and the other four layers (lexicon, CVaR,
+  # multi-framework LLM, audit) still run. With it, the engine answers
+  # corpus-grounded queries inside the turn-context budget.
+  #
+  # Security plugin disabled for the local-loopback dev/prod-on-one-host
+  # case (the listener binds 127.0.0.1 — exposing it requires an explicit
+  # reverse proxy). Operators with multi-host setups should run their
+  # own OpenSearch with security on and set OPENSEARCH_URL accordingly.
+  #
+  # Heap capped at 512 MB → container footprint ~768 MB. Total bundled
+  # stack RAM: postgres (~150 MB) + qdrant (~100 MB) + valkey (~50 MB) +
+  # opensearch (~768 MB) ≈ 1.1 GB steady state.
+  opensearch:
+    image: opensearchproject/opensearch:2.19.0
+    environment:
+      TZ: ${TZ:-UTC}
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      bootstrap.memory_lock: "false"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - celiums_opensearch:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
 volumes:
   celiums_pg:
   celiums_qdrant:
   celiums_valkey:
+  celiums_opensearch:

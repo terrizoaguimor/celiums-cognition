@@ -91,6 +91,33 @@ export function ensureCredentials(): string {
   return CREDS_FILE;
 }
 
+/** OpenSearch's bootstrap check requires `vm.max_map_count >= 262144` on
+ *  the host kernel (mmap-heavy Lucene index files). Without it the
+ *  container fails to start with the cryptic message:
+ *    "max virtual memory areas vm.max_map_count [65530] is too low".
+ *  Best-effort set: on Linux with root we can `sysctl -w`; elsewhere
+ *  (rootless Docker, macOS via OrbStack, etc.) the host's kernel value
+ *  is already higher or the container runtime handles it. Failure is
+ *  not fatal — we log a hint so the operator can fix it manually. */
+function ensureVmMaxMapCount(): void {
+  if (process.platform !== "linux") return;
+  try {
+    const current = Number(readFileSync("/proc/sys/vm/max_map_count", "utf8").trim());
+    if (Number.isFinite(current) && current >= 262144) return;
+    const r = spawnSync("sysctl", ["-w", "vm.max_map_count=262144"], { stdio: "ignore" });
+    if (r.status === 0) {
+      console.log("[celiums-cognition] Set vm.max_map_count=262144 (OpenSearch requirement).");
+    } else {
+      console.warn(
+        "[celiums-cognition] vm.max_map_count is below 262144 and could not be raised " +
+        "automatically. OpenSearch may fail to start. Fix manually:\n" +
+        "    sudo sysctl -w vm.max_map_count=262144\n" +
+        "    echo 'vm.max_map_count=262144' | sudo tee -a /etc/sysctl.d/99-opensearch.conf",
+      );
+    }
+  } catch { /* /proc unavailable — skip */ }
+}
+
 export async function setup(): Promise<number> {
   // Prefer `docker compose` (v2); fall back to `docker-compose` (v1).
   const probe = spawnSync("docker", ["compose", "version"], { stdio: "ignore" });
@@ -102,6 +129,7 @@ export async function setup(): Promise<number> {
     return 1;
   }
 
+  ensureVmMaxMapCount();
   const credsFile = ensureCredentials();
   const tz = detectHostTimezone();
   console.log(`[celiums-cognition] Detected host timezone: ${tz} (passed to containers as TZ env).`);
@@ -124,7 +152,7 @@ export async function setup(): Promise<number> {
     return code;
   }
   console.log(
-    "[celiums-cognition] Stack healthy: Postgres :5432, Qdrant :6333, Valkey :6379.\n" +
+    "[celiums-cognition] Stack healthy: Postgres :5432, Qdrant :6333, Valkey :6379, OpenSearch :9200.\n" +
       "[celiums-cognition] The plugin will connect on next agent run.",
   );
   return 0;

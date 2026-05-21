@@ -30,12 +30,14 @@ export async function health(
   const qdEp = parse(ctx.engineConfig.qdrantUrl);
   const vkEp = parse(ctx.engineConfig.valkeyUrl);
   const teiEp = parse(ctx.teiUrl);
+  const osEp = parse(process.env.OPENSEARCH_URL);
 
-  const [pgOk, qdOk, vkOk, teiOk] = await Promise.all([
+  const [pgOk, qdOk, vkOk, teiOk, osOk] = await Promise.all([
     pgEp ? probeListener(pgEp.host, pgEp.port) : Promise.resolve(false),
     qdEp ? probeListener(qdEp.host, qdEp.port) : Promise.resolve(false),
     vkEp ? probeListener(vkEp.host, vkEp.port) : Promise.resolve(false),
     teiEp ? probeListener(teiEp.host, teiEp.port) : Promise.resolve(false),
+    osEp ? probeListener(osEp.host, osEp.port) : Promise.resolve(false),
   ]);
 
   let pgSize: number | null = null;
@@ -62,6 +64,23 @@ export async function health(
     } catch { /* leave null */ }
   }
 
+  // OpenSearch ethics-corpus doc count — informational. Probed only
+  // when the listener is up; cheap GET /_count call with a 1.5s budget.
+  let ethicsCorpusCount: number | null = null;
+  if (osOk && osEp) {
+    try {
+      const indexName = process.env.ETHICS_INDEX || "ethics_knowledge";
+      const r = await fetch(
+        `http://${osEp.host}:${osEp.port}/${indexName}/_count`,
+        { signal: AbortSignal.timeout(1500) },
+      );
+      if (r.ok) {
+        const info = (await r.json()) as { count?: number };
+        ethicsCorpusCount = typeof info.count === "number" ? info.count : null;
+      }
+    } catch { /* leave null */ }
+  }
+
   sendJson(res, 200, {
     version: ctx.plugin.version,
     edition: ctx.plugin.edition,
@@ -70,6 +89,11 @@ export async function health(
       postgres: pgEp ? { ok: pgOk, endpoint: `${pgEp.host}:${pgEp.port}`, size_bytes: pgSize } : null,
       qdrant: qdEp ? { ok: qdOk, endpoint: `${qdEp.host}:${qdEp.port}` } : null,
       valkey: vkEp ? { ok: vkOk, endpoint: `${vkEp.host}:${vkEp.port}` } : null,
+      opensearch: osEp ? {
+        ok: osOk,
+        endpoint: `${osEp.host}:${osEp.port}`,
+        ethics_corpus_docs: ethicsCorpusCount,
+      } : null,
       tei: teiEp ? { ok: teiOk, endpoint: `${teiEp.host}:${teiEp.port}`, model: teiModel } : null,
     },
     seed: ctx.seedState ?? null,

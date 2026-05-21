@@ -26,6 +26,12 @@ import {
   skillsRowCount,
   type SeedManagerOptions,
 } from "../../seed.js";
+import {
+  applyEthicsCorpusIfNeeded,
+  ethicsCorpusOptionsFromEnv,
+  ethicsCorpusCount,
+  type EthicsCorpusOptions,
+} from "../../ethics-corpus-loader.js";
 import type { PluginContext, EditionOptions } from "../context.js";
 import type { OpenClawPluginApi } from "../../api.js";
 
@@ -117,6 +123,41 @@ async function runSeed(
   }
 }
 
+async function runEthicsCorpus(
+  edition: EditionOptions,
+  ec: { databaseUrl?: string },
+  api: OpenClawPluginApi,
+): Promise<void> {
+  if (!ec.databaseUrl) return;
+  const opts: EthicsCorpusOptions | null =
+    (edition.ethicsCorpusOptions as EthicsCorpusOptions | undefined) ??
+    ethicsCorpusOptionsFromEnv();
+  if (!opts) return;
+  // The corpus lands in OpenSearch; we still need a PG pool for the
+  // idempotency marker in celiums_migrations.
+  const pool = new Pool({ connectionString: ec.databaseUrl, max: 1 });
+  try {
+    const applied = await applyEthicsCorpusIfNeeded(
+      pool as unknown as Parameters<typeof applyEthicsCorpusIfNeeded>[0],
+      {
+        ...opts,
+        logger: {
+          info: (m: string) => api.logger.info(`${edition.id}: ${m}`),
+          warn: (m: string) => api.logger.warn?.(`${edition.id}: ${m}`),
+        },
+      },
+    );
+    if (applied) {
+      const n = await ethicsCorpusCount(opts.opensearchUrl, opts.indexName);
+      if (n != null) {
+        api.logger.info(`${edition.id}: ethics corpus index "${opts.indexName}" has ${n} docs`);
+      }
+    }
+  } finally {
+    await pool.end().catch(() => undefined);
+  }
+}
+
 export function wireService(ctx: PluginContext): void {
   const { api, cfg, edition, setReady, runCleanup } = ctx;
 
@@ -134,9 +175,14 @@ export function wireService(ctx: PluginContext): void {
       const engineCfg = edition.resolveEngineConfig(cfg, api);
       const ec = engineCfg as { databaseUrl?: string; qdrantUrl?: string; valkeyUrl?: string };
       const candidates = [
-        { name: "postgres", endpoint: parseHostPort(ec.databaseUrl) },
-        { name: "qdrant",   endpoint: parseHostPort(ec.qdrantUrl) },
-        { name: "valkey",   endpoint: parseHostPort(ec.valkeyUrl) },
+        { name: "postgres",   endpoint: parseHostPort(ec.databaseUrl) },
+        { name: "qdrant",     endpoint: parseHostPort(ec.qdrantUrl) },
+        { name: "valkey",     endpoint: parseHostPort(ec.valkeyUrl) },
+        // Ethics corpus target — added when the env points at a local
+        // listener so the bootstrap waits for it before running the
+        // loader. If OPENSEARCH_URL points off-host, we trust the
+        // operator and skip the wait.
+        { name: "opensearch", endpoint: parseHostPort(process.env.OPENSEARCH_URL) },
       ].flatMap((c) =>
         c.endpoint && isLocalhost(c.endpoint.host)
           ? [{ name: c.name, host: c.endpoint.host, port: c.endpoint.port }]
@@ -156,6 +202,7 @@ export function wireService(ctx: PluginContext): void {
         );
         await runMigrations(edition, ec, api);
         await runSeed(edition, ec, api);
+        await runEthicsCorpus(edition, ec, api);
         setReady(true);
         api.logger.info(`${edition.id}: readiness gate open — db-writing hooks now active`);
         return;
@@ -176,6 +223,7 @@ export function wireService(ctx: PluginContext): void {
           { databaseUrl?: string; qdrantUrl?: string; valkeyUrl?: string };
         await runMigrations(edition, ecPostBootstrap, api);
         await runSeed(edition, ecPostBootstrap, api);
+        await runEthicsCorpus(edition, ecPostBootstrap, api);
         setReady(true);
         api.logger.info(`${edition.id}: readiness gate open — db-writing hooks now active`);
       } catch (err) {

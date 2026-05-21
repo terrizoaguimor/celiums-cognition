@@ -2,9 +2,12 @@
 
 Persistent emotional memory for OpenClaw.
 
-Full production stack: PostgreSQL 17 + pgvector, Qdrant, and Valkey
-provisioned **automatically** via Docker compose. BGE-M3 embeddings by
-default; bring your own embedding endpoint via `TEI_URL`.
+Full production stack: PostgreSQL 17 + pgvector, Qdrant, Valkey, and
+OpenSearch 2.19 provisioned **automatically** via Docker compose. The
+first boot also downloads the curated 10K-skills seed (into Postgres)
+and the ethics-knowledge corpus (~1857 docs, 1024-dim embeddings, into
+OpenSearch) — both SHA-256 verified. BGE-M3 embeddings by default;
+bring your own embedding endpoint via `TEI_URL`.
 
 ## Install
 
@@ -21,7 +24,11 @@ firewall, so loopback binding is the safe default.
 
 Requirements:
 - Docker (with `docker compose` v2)
-- ~2 GB RAM headroom for the stack
+- ~1.5 GB RAM headroom for the stack (postgres ~150 MB + qdrant ~100 MB
+  + valkey ~50 MB + opensearch ~768 MB)
+- Linux hosts: `vm.max_map_count >= 262144` for OpenSearch. `setup.ts`
+  attempts to raise it via `sysctl -w` when run as root; otherwise set
+  it manually: `echo 'vm.max_map_count=262144' | sudo tee -a /etc/sysctl.d/99-opensearch.conf && sudo sysctl --system`
 - The host user that runs the gateway must be able to talk to the
   Docker socket
 
