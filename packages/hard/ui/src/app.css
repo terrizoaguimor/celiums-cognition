@@ -997,6 +997,105 @@ body {
 .cc-switch input:checked + .slot::after { left: 16px; }
 
 /* ───────────────────────────────────────────────────────── */
+/*  Responsive — collapse the desktop shell on tablet/mobile */
+/* ───────────────────────────────────────────────────────── */
+
+/* Tablet (≤ 1024px): narrower sidebar, reduce content padding. */
+@media (max-width: 1024px) {
+  .cc-side-eyebrow { font-size: 10px; }
+  .cc-nav-row { font-size: 12px; }
+  .cc-grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
+  .cc-grid.cols-2 { grid-template-columns: 1fr; }
+  .cc-docs-layout { grid-template-columns: 220px 1fr; }
+  .cc-skills-layout { grid-template-columns: 220px 1fr; }
+  .cc-settings-grid { grid-template-columns: 220px 1fr; }
+  .cc-journal-wrap { grid-template-columns: 240px 1fr; }
+}
+
+/* Mobile (≤ 768px): off-canvas sidebar, single-column grids, full-width drawers. */
+@media (max-width: 768px) {
+  .celiums-card-header { padding: 12px 14px; }
+  .celiums-card-body { padding: 14px; }
+  .cc-page-head { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .cc-page-head .actions { flex-wrap: wrap; }
+
+  /* Hide the topbar search box (still reachable via ⌘K). */
+  .cc-topbar-search { display: none !important; }
+  /* Show the hamburger toggle + mobile scrim on mobile. */
+  .cc-mobile-nav-toggle { display: inline-flex !important; }
+  .cc-mobile-scrim { display: block !important; }
+
+  /* Collapse multi-column layouts to single column with the aside on top. */
+  .cc-skills-layout,
+  .cc-settings-grid,
+  .cc-docs-layout,
+  .cc-journal-wrap { grid-template-columns: 1fr; }
+  .cc-docs-nav { position: static; }
+  .cc-settings-nav,
+  .cc-filters { width: 100%; }
+  .cc-grid.cols-4,
+  .cc-grid.cols-3,
+  .cc-grid.cols-2 { grid-template-columns: 1fr; }
+  .cc-grid { gap: 10px; }
+
+  /* Off-canvas sidebar — slide in via a body-class toggle the shell sets
+   * when the operator taps the hamburger. By default it sits offscreen. */
+  .celiums-shell aside.cc-sidebar {
+    position: fixed;
+    top: 52px; bottom: 0; left: 0;
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 0.22s cubic-bezier(0.4,0,0.2,1);
+    box-shadow: 8px 0 24px rgba(0,0,0,0.18);
+  }
+  .celiums-shell[data-mobile-nav="open"] aside.cc-sidebar {
+    transform: translateX(0);
+  }
+
+  /* Drawer: full screen on mobile so long content (skill markdown,
+   * journal entry, memory body) isn't shoved into a 92vw slot that
+   * keeps its scrim visible. */
+  .cc-drawer { width: 100vw !important; }
+
+  /* Content padding reduced. */
+  main.celiums-scroll > div { padding: 18px 14px 80px !important; }
+}
+
+/* Very narrow (≤ 480px): tighten further, hide secondary chips. */
+@media (max-width: 480px) {
+  .cc-page-head .celiums-chip:not(.green):not(.amber):not(.red) {
+    display: none;
+  }
+  .cc-search-row { flex-wrap: wrap; gap: 8px; }
+  .cc-search-input { width: 100%; }
+  .cc-results-head { flex-wrap: wrap; gap: 10px; }
+  .cc-pipeline { flex-direction: column; gap: 8px; }
+  .cc-pipe-arrow { transform: rotate(90deg); }
+}
+
+/* ───────────────────────────────────────────────────────── */
+/*  Docs                                                     */
+/* ───────────────────────────────────────────────────────── */
+.cc-docs-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 18px;
+}
+.cc-docs-nav {
+  position: sticky;
+  top: 16px;
+  align-self: flex-start;
+}
+.cc-docs-content {
+  min-width: 0; /* let long lines wrap inside markdown */
+}
+.cc-md {
+  color: var(--c-fg);
+}
+.cc-md > *:first-child { margin-top: 0; }
+.cc-md > *:last-child  { margin-bottom: 0; }
+
+/* ───────────────────────────────────────────────────────── */
 /*  Drawer (slide-in right)                                  */
 /* ───────────────────────────────────────────────────────── */
 .cc-scrim {

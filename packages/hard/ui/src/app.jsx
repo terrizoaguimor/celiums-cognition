@@ -2,7 +2,7 @@
  * Copyright 2026 Celiums Solutions LLC
  * Licensed under the Apache License, Version 2.0
  */
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"; // useRef used by usePageTransition
 import { CCConsoleShell, Toast } from "./cc-shell.jsx";
 import { TweakRadio, TweakSection, TweakToggle, TweaksPanel } from "./tweaks-panel.jsx";
 import { CommandPalette } from "./command-palette.jsx";
@@ -13,6 +13,8 @@ import { Memories } from "./memories.jsx";
 import { Journal } from "./journal.jsx";
 import { Ethics } from "./ethics.jsx";
 import { Settings } from "./settings.jsx";
+import { Docs } from "./docs.jsx";
+import { useLenis, usePageTransition } from "./motion.js";
 import {
   authMe, authLogout,
   fetchHealth, fetchCounts, useQuery,
@@ -26,7 +28,7 @@ export const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "showLiveDot": true,
 }/*EDITMODE-END*/;
 
-export const ROUTES = ["overview", "skills", "memories", "journal", "ethics", "settings"];
+export const ROUTES = ["overview", "skills", "memories", "journal", "ethics", "docs", "settings"];
 
 export function App() {
   // ── bootstrap auth ──
@@ -98,7 +100,7 @@ export function App() {
       }
       // ⌘/Ctrl + number → jump tabs
       if (!(e.metaKey || e.ctrlKey)) return;
-      const map = { "1": "overview", "2": "skills", "3": "memories", "4": "journal", "5": "ethics", ",": "settings" };
+      const map = { "1": "overview", "2": "skills", "3": "memories", "4": "journal", "5": "ethics", "6": "docs", ",": "settings" };
       const target = map[e.key];
       if (target) { e.preventDefault(); navigate(target); }
     };
@@ -137,7 +139,7 @@ export function App() {
     }
     const titles = {
       overview: "Overview", skills: "Skills", memories: "Memories",
-      journal: "Journal", ethics: "Ethics", settings: "Settings",
+      journal: "Journal", ethics: "Ethics", docs: "Docs", settings: "Settings",
     };
     document.title = `${titles[route]} · Celiums Cognition`;
   }, [route, authState]);
@@ -178,6 +180,14 @@ export function App() {
   };
   const toggleTheme = () => setTweak("theme", values.theme === "dark" ? "light" : "dark");
 
+  // Smooth scroll on the main content area (Lenis) — only when
+  // authenticated so it doesn't fight the auth-screen layout.
+  useLenis("main.celiums-scroll");
+
+  // Cross-fade the content well on every route change.
+  const routeRef = useRef(null);
+  usePageTransition(routeRef, [route]);
+
   return (
     <>
       <CCConsoleShell
@@ -190,12 +200,14 @@ export function App() {
         onLogout={doLogout}
         onOpenPalette={() => setPaletteOpen(true)}
         onToggleTheme={toggleTheme}
+        routeRef={routeRef}
       >
         {route === "overview" && <Overview showToast={showToast} />}
         {route === "skills"   && <Skills   showToast={showToast} />}
         {route === "memories" && <Memories showToast={showToast} />}
         {route === "journal"  && <Journal  showToast={showToast} />}
         {route === "ethics"   && <Ethics   showToast={showToast} />}
+        {route === "docs"     && <Docs />}
         {route === "settings" && <Settings showToast={showToast} user={user} />}
       </CCConsoleShell>
 

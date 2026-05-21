@@ -34,6 +34,12 @@ export const CC_ROUTES = [
       <path d="M8 2v12M3 5h10M4.5 5l-2 5h4l-2-5zM11.5 5l-2 5h4l-2-5z" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   },
+  { id: "docs",      label: "Docs",      hint: "⌘6", icon: (p) =>
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" {...p}>
+      <path d="M3 2.5h7.5L13 5v8.5a1 1 0 01-1 1H3a1 1 0 01-1-1v-10a1 1 0 011-1z" strokeLinejoin="round"/>
+      <path d="M10 2.5V5h3M4.5 7.5h7M4.5 10h5" strokeLinecap="round"/>
+    </svg>
+  },
   { id: "settings",  label: "Settings",  hint: "⌘,", icon: (p) =>
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" {...p}>
       <circle cx="8" cy="8" r="2"/>
@@ -45,10 +51,16 @@ export const CC_ROUTES = [
 /* ─────────────────────── Console shell (Celiums Cognition flavor) ─────────────────────── */
 export function CCConsoleShell({
   route, onNavigate, counts, health, theme = "light", user, children,
-  onLogout, onOpenPalette, onToggleTheme,
+  onLogout, onOpenPalette, onToggleTheme, routeRef,
 }) {
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Close the off-canvas nav after a route change.
+  useEffect(() => { setMobileNavOpen(false); }, [route]);
   return (
-    <div className="celiums" data-theme={theme} style={{
+    <div className="celiums celiums-shell"
+         data-theme={theme}
+         data-mobile-nav={mobileNavOpen ? "open" : "closed"}
+         style={{
       minHeight: "100vh", display: "flex", flexDirection: "column", overflow: "hidden",
     }}>
       {/* Topbar */}
@@ -58,6 +70,19 @@ export function CCConsoleShell({
         background: "var(--c-bg)",
         display: "flex", alignItems: "center", padding: "0 18px", gap: 12,
       }}>
+        <button
+          type="button"
+          aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+          onClick={() => setMobileNavOpen((v) => !v)}
+          className="cc-mobile-nav-toggle"
+          style={{
+            display: "none", /* shown only on mobile via CSS */
+            background: "transparent", border: 0, cursor: "pointer",
+            color: "var(--c-fg)", padding: 6, marginRight: 4,
+            fontSize: 18, lineHeight: 1, fontFamily: "inherit",
+          }}>
+          {mobileNavOpen ? "✕" : "☰"}
+        </button>
         <CeliumsWordmark size={20} />
         <span style={{ color: "var(--c-fg-faint)", fontSize: 14 }}>/</span>
         <button style={{
@@ -88,6 +113,7 @@ export function CCConsoleShell({
           type="button"
           onClick={onOpenPalette}
           aria-label="Open command palette"
+          className="cc-topbar-search"
           style={{
             display: "inline-flex", alignItems: "center", gap: 8,
             padding: "5px 10px", borderRadius: 6,
@@ -108,9 +134,22 @@ export function CCConsoleShell({
       </div>
 
       {/* Body */}
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+      <div style={{ display: "flex", flex: 1, minHeight: 0, position: "relative" }}>
+        {/* Mobile scrim — clicking outside the sidebar closes it */}
+        {mobileNavOpen && (
+          <div onClick={() => setMobileNavOpen(false)}
+               className="cc-mobile-scrim"
+               style={{
+                 display: "none", /* shown only on mobile via CSS */
+                 position: "fixed", inset: "52px 0 0 0", zIndex: 55,
+                 background: "rgba(10,12,11,0.4)",
+                 backdropFilter: "blur(2px)",
+                 WebkitBackdropFilter: "blur(2px)",
+               }} />
+        )}
         {/* Sidebar */}
-        <aside style={{
+        <aside className="cc-sidebar"
+               style={{
           width: 230, flex: "0 0 230px",
           borderRight: "1px solid var(--c-border)",
           background: "var(--c-surface-2)",
@@ -169,9 +208,12 @@ export function CCConsoleShell({
           </div>
         </aside>
 
-        {/* Content well */}
-        <main style={{ flex: 1, minWidth: 0, overflowY: "auto", background: "var(--c-bg)" }}>
-          <div style={{ maxWidth: 1280, margin: "0 auto", padding: "32px 36px 80px" }}>
+        {/* Content well — `celiums-scroll` is the hook target Lenis
+            attaches its smooth-scroll instance to. */}
+        <main className="celiums-scroll"
+              style={{ flex: 1, minWidth: 0, overflowY: "auto", background: "var(--c-bg)" }}>
+          <div ref={routeRef}
+               style={{ maxWidth: 1280, margin: "0 auto", padding: "32px 36px 80px" }}>
             {children}
           </div>
         </main>
@@ -470,34 +512,80 @@ export function fmtRelative(iso) {
 }
 
 /* ─────────────────────── Markdown view ─────────────────────── */
+// Backed by react-markdown + remark-gfm (tables, strikethrough, task lists,
+// autolinks). The previous hand-rolled parser handled headings + bullets
+// + inline code only — react-markdown is ~30KB gz but lets skill bodies,
+// memory content, and docs render as authored (tables, code blocks,
+// nested lists, footnotes).
+import _ReactMarkdown from "react-markdown";
+import _remarkGfm from "remark-gfm";
+
 export function MarkdownView({ text }) {
-  const lines = text.split("\n");
-  const out = [];
-  lines.forEach((ln, i) => {
-    if (ln.startsWith("# ")) {
-      out.push(<div key={i} className="h1">{ln.slice(2)}</div>);
-    } else if (ln.startsWith("## ")) {
-      out.push(<div key={i} className="h2" style={{ marginTop: 14 }}>{ln.slice(3)}</div>);
-    } else if (ln.startsWith("- ")) {
-      out.push(<div key={i}>• {ln.slice(2)}</div>);
-    } else if (ln.startsWith("|")) {
-      out.push(<div key={i} style={{ color: "var(--c-fg-muted)" }}>{ln}</div>);
-    } else {
-      const parts = [];
-      let rest = ln;
-      let key = 0;
-      while (rest.length) {
-        const m = rest.match(/`([^`]+)`/);
-        if (!m) { parts.push(rest); break; }
-        parts.push(rest.slice(0, m.index));
-        parts.push(<span key={key++} className="code">{m[1]}</span>);
-        rest = rest.slice(m.index + m[0].length);
-      }
-      out.push(<div key={i}>{parts.length ? parts : "\u00A0"}</div>);
-    }
-  });
-  return <div className="cc-content-md">{out}</div>;
+  return (
+    <div className="cc-md">
+      <_ReactMarkdown
+        remarkPlugins={[_remarkGfm]}
+        components={{
+          // Heading mapping to existing celiums tokens so light/dark
+          // theming + spacing match the rest of the surface.
+          h1: ({ node, ...p }) => <h1 className="celiums-h2" style={{ margin: "20px 0 10px" }} {...p} />,
+          h2: ({ node, ...p }) => <h2 style={{ fontSize: 16, fontWeight: 600, color: "var(--c-fg)", margin: "18px 0 8px" }} {...p} />,
+          h3: ({ node, ...p }) => <h3 style={{ fontSize: 14, fontWeight: 500, color: "var(--c-fg)", margin: "14px 0 6px" }} {...p} />,
+          p:  ({ node, ...p }) => <p  style={{ fontSize: 13.5, lineHeight: 1.65, color: "var(--c-fg)", margin: "0 0 10px" }} {...p} />,
+          ul: ({ node, ...p }) => <ul style={{ paddingLeft: 22, margin: "8px 0", color: "var(--c-fg)", fontSize: 13.5, lineHeight: 1.6 }} {...p} />,
+          ol: ({ node, ...p }) => <ol style={{ paddingLeft: 22, margin: "8px 0", color: "var(--c-fg)", fontSize: 13.5, lineHeight: 1.6 }} {...p} />,
+          li: ({ node, ...p }) => <li style={{ margin: "2px 0" }} {...p} />,
+          a:  ({ node, ...p }) => <a className="celiums-link" target="_blank" rel="noreferrer" {...p} />,
+          code: ({ node, inline, className, children, ...p }) => {
+            if (inline) {
+              return (
+                <code style={{
+                  fontFamily: "var(--font-mono)", fontSize: "0.9em",
+                  background: "var(--c-surface-2)", padding: "1px 5px",
+                  borderRadius: 4, color: "var(--c-fg)",
+                }} {...p}>{children}</code>
+              );
+            }
+            return (
+              <pre style={{
+                background: "var(--c-surface-2)", border: "1px solid var(--c-divider)",
+                borderRadius: 6, padding: "10px 12px", margin: "8px 0",
+                fontFamily: "var(--font-mono)", fontSize: 12.5, lineHeight: 1.55,
+                color: "var(--c-fg)", overflowX: "auto",
+              }}>
+                <code className={className} {...p}>{children}</code>
+              </pre>
+            );
+          },
+          blockquote: ({ node, ...p }) => <blockquote style={{
+            borderLeft: "3px solid var(--c-green)", paddingLeft: 12, margin: "10px 0",
+            color: "var(--c-fg-muted)", fontStyle: "italic",
+          }} {...p} />,
+          table: ({ node, ...p }) => <table style={{
+            borderCollapse: "collapse", width: "100%", margin: "10px 0",
+            fontSize: 13, border: "1px solid var(--c-border)",
+            borderRadius: 6, overflow: "hidden",
+          }} {...p} />,
+          th: ({ node, ...p }) => <th style={{
+            textAlign: "left", padding: "8px 10px", background: "var(--c-surface-2)",
+            borderBottom: "1px solid var(--c-divider)", fontWeight: 500,
+            color: "var(--c-fg)",
+          }} {...p} />,
+          td: ({ node, ...p }) => <td style={{
+            padding: "8px 10px", borderBottom: "1px solid var(--c-divider)",
+            color: "var(--c-fg)",
+          }} {...p} />,
+          hr: ({ node, ...p }) => <hr style={{
+            border: 0, borderTop: "1px solid var(--c-divider)", margin: "16px 0",
+          }} {...p} />,
+        }}
+      >
+        {text || ""}
+      </_ReactMarkdown>
+    </div>
+  );
 }
+
 
 /* ─────────────────────── Drawer ─────────────────────── */
 export function Drawer({ open, onClose, children }) {
