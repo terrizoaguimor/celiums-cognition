@@ -216,12 +216,66 @@
 }
 .celiums-hint.error { color: var(--c-red-text); }
 
+/* Glass tokens — frosted-surface look for floating UI (drawers,
+ * popovers, command palette, user menu, tweaks panel). Tuned to be
+ * subtle: enough blur to feel layered, alpha high enough that text
+ * stays legible over busy backgrounds. */
+.celiums {
+  --c-glass:        rgba(251, 251, 247, 0.78);
+  --c-glass-strong: rgba(251, 251, 247, 0.92);
+  --glass-blur:     blur(14px) saturate(160%);
+  /* Tri-color brand gradient used for card borders + accents. Sampled
+   * from green/amber/red at low alpha so it reads as polish, not
+   * decoration. */
+  --celiums-grad:
+    linear-gradient(135deg,
+      rgba(0,210,106,0.30) 0%,
+      rgba(0,210,106,0.10) 30%,
+      rgba(217,119,6,0.08) 60%,
+      rgba(208,64,80,0.18) 100%);
+  --celiums-grad-strong:
+    linear-gradient(135deg,
+      rgba(0,210,106,0.55) 0%,
+      rgba(0,210,106,0.25) 35%,
+      rgba(217,119,6,0.20) 65%,
+      rgba(208,64,80,0.45) 100%);
+}
+.celiums[data-theme="dark"],
+[data-theme="dark"] .celiums {
+  --c-glass:        rgba(17, 20, 15, 0.72);
+  --c-glass-strong: rgba(17, 20, 15, 0.88);
+  --celiums-grad:
+    linear-gradient(135deg,
+      rgba(0,210,106,0.42) 0%,
+      rgba(0,210,106,0.14) 30%,
+      rgba(217,119,6,0.10) 60%,
+      rgba(208,64,80,0.24) 100%);
+  --celiums-grad-strong:
+    linear-gradient(135deg,
+      rgba(0,210,106,0.70) 0%,
+      rgba(0,210,106,0.32) 35%,
+      rgba(217,119,6,0.26) 65%,
+      rgba(208,64,80,0.55) 100%);
+}
+
 /* card */
 .celiums-card {
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
+  /* Gradient border via double-background: solid surface in the
+   * padding-box, tri-color brand gradient in the border-box. The
+   * 1px transparent border slot is what actually shows the gradient.
+   * No JS, animates cheaply on hover. */
+  background:
+    linear-gradient(var(--c-surface), var(--c-surface)) padding-box,
+    var(--celiums-grad) border-box;
+  border: 1px solid transparent;
   border-radius: var(--r-lg);
   overflow: hidden;
+  transition: background 0.4s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+.celiums-card:hover {
+  background:
+    linear-gradient(var(--c-surface), var(--c-surface)) padding-box,
+    var(--celiums-grad-strong) border-box;
 }
 .celiums-card-header {
   padding: 14px 18px;

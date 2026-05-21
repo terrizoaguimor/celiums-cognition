@@ -136,10 +136,13 @@ export function CommandPalette({
         data-theme={theme}
         style={{
           width: "min(640px, 92vw)",
-          background: "var(--c-surface)",
-          border: "1px solid var(--c-border)",
-          borderRadius: 12,
-          boxShadow: "0 24px 64px rgba(0,0,0,0.25)",
+          background: "var(--c-glass-strong)",
+          backdropFilter: "var(--glass-blur)",
+          WebkitBackdropFilter: "var(--glass-blur)",
+          border: "1px solid transparent",
+          borderImage: "var(--celiums-grad-strong) 1",
+          borderRadius: 14,
+          boxShadow: "0 28px 72px rgba(0,0,0,0.28)",
           overflow: "hidden",
           fontFamily: "var(--font-sans)",
           color: "var(--c-fg)",
