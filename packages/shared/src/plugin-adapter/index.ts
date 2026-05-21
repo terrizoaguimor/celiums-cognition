@@ -79,6 +79,7 @@ import {
   COGNITION_STATUS_DESCRIPTOR,
   type ActionDeps,
 } from "./operator-actions.js";
+import { resolveToolMetadata } from "./tool-metadata.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -978,6 +979,36 @@ export function createCognitionPlugin(edition: EditionOptions) {
             ? { name: tool.definition.name }
             : { name: tool.definition.name, optional: true },
         );
+
+        // ── Fase E: tool metadata (group + risk + tags) ────────────────
+        // Feature-detected per loop iteration so a host without
+        // registerToolMetadata silently skips. Doctrine T1 (fail-closed
+        // defaults — risk=medium when not declared explicitly), T2 (the
+        // ordering of registrations mirrors the iteration order of
+        // `tools`, which is already cache-stable via tool-curator).
+        const registerToolMetadata = (
+          api as unknown as {
+            registerToolMetadata?: (m: unknown) => void;
+          }
+        ).registerToolMetadata;
+        if (typeof registerToolMetadata === "function") {
+          try {
+            const meta = resolveToolMetadata(tool.definition.name);
+            registerToolMetadata.call(api, {
+              toolName: meta.toolName,
+              risk: meta.risk,
+              tags: meta.tags,
+              ...(meta.displayName ? { displayName: meta.displayName } : {}),
+              ...(meta.description ? { description: meta.description } : {}),
+            });
+          } catch (err) {
+            api.logger.warn?.(
+              `celiums-cognition: registerToolMetadata failed for ${tool.definition.name}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
+        }
       }
 
       // ── Proactive turn-context (before_prompt_build → prependContext) ──
@@ -1270,33 +1301,168 @@ export function createCognitionPlugin(edition: EditionOptions) {
       }
 
       // ── Ethics gate (public hooks — NOT registerTrustedToolPolicy) ─────
+      // Doctrine G1: hooks return typed decisions carrying decision,
+      // reason, source, and category. HookDecisionBlock supports
+      // `category` (analytics tag) and `metadata` (audit context) per
+      // hook-types-CaX_Eg5O.d.ts:73-79.
+      //
+      // Doctrine G3: rules layered by source. Today the plugin reads
+      // from the plugin-level config (cfg.ethics); operator runtime
+      // adjustments would route through `userSettings`/`projectSettings`
+      // when those layers exist on the host. The `source` field on each
+      // block decision names the layer that fired, so the operator
+      // dashboard can show "blocked by project-level rule" vs "blocked
+      // by hard policy" without re-deriving from the reason string.
       if (cfg.ethics.enabled) {
-        const judge = (text: string): { block: boolean; reason: string } => {
+        type GateVerdict = {
+          block: boolean;
+          reason: string;
+          category: string;
+          source: "engine-default" | "project-config" | "session-override";
+          ruleId?: string;
+        };
+        const judge = (text: string): GateVerdict => {
           const r = ethics.evaluate(text);
-          if (r.passed) return { block: false, reason: "" };
-          const hard = r.violations?.some((v: { blocked?: boolean }) => v.blocked) ?? false;
-          // strictMode blocks any non-pass; otherwise only hard (blocked) violations.
+          if (r.passed) {
+            return { block: false, reason: "", category: "pass", source: "engine-default" };
+          }
+          const violations = r.violations ?? [];
+          const hard = violations.some((v: { blocked?: boolean }) => v.blocked);
           const block = cfg.ethics.strictMode ? true : hard;
+          const categories = violations
+            .map((v: { category?: string }) => v.category)
+            .filter((c: string | undefined): c is string => Boolean(c));
+          const primary = categories[0] ?? "policy-violation";
+          const reason =
+            `Celiums ethics: ${categories.join(", ") || "policy violation"}`;
           return {
             block,
-            reason: `Celiums ethics: ${r.violations?.map((v: { category?: string }) => v.category).join(", ") || "policy violation"}`,
+            reason,
+            category: primary,
+            // strictMode is a project-config layer; the engine default
+            // would only block on `hard` violations.
+            source: cfg.ethics.strictMode && !hard ? "project-config" : "engine-default",
+            ruleId: (violations[0] as { ruleId?: string } | undefined)?.ruleId,
           };
         };
         api.on(
           "before_agent_run",
-          (event: { prompt?: string }) => {
+          (event: { prompt?: string }, hookCtx: { agentId?: string; sessionId?: string }) => {
             if (!event.prompt) return undefined;
             const v = judge(event.prompt);
-            return v.block ? { outcome: "block" as const, reason: v.reason } : undefined;
+            if (!v.block) return undefined;
+            api.logger.info(
+              `celiums-cognition: ethics block · before_agent_run · category=${v.category} · source=${v.source} · agent=${hookCtx?.agentId ?? cfg.agentId}`,
+            );
+            return {
+              outcome: "block" as const,
+              reason: v.reason,
+              category: v.category,
+              metadata: {
+                source: v.source,
+                surface: "before_agent_run",
+                ...(v.ruleId ? { ruleId: v.ruleId } : {}),
+              },
+            };
           },
         );
         api.on(
           "before_tool_call",
-          (event: { toolName?: string; args?: unknown }) => {
+          (event: { toolName?: string; args?: unknown }, hookCtx: { agentId?: string; sessionId?: string }) => {
             const probe = `${event.toolName ?? ""} ${JSON.stringify(event.args ?? {})}`;
             const v = judge(probe);
-            return v.block ? { block: true as const, reason: v.reason } : undefined;
+            if (!v.block) return undefined;
+            api.logger.info(
+              `celiums-cognition: ethics block · before_tool_call · tool=${event.toolName} · category=${v.category} · source=${v.source} · agent=${hookCtx?.agentId ?? cfg.agentId}`,
+            );
+            return {
+              block: true as const,
+              blockReason:
+                `${v.reason} (source: ${v.source}, category: ${v.category})`,
+            };
           },
+        );
+      }
+
+      // ── Fase E: security audit collector ───────────────────────────────
+      // Surfaces recent ethics block decisions to the gateway's central
+      // security audit log. Doctrine G1 + G3: governance signals
+      // propagate beyond the plugin's own audit table to the
+      // gateway-wide view, with layered source attribution.
+      //
+      // Verified shape (types-BsgRSTcu2.d.ts:884-890):
+      //   SecurityAuditFinding = {
+      //     checkId, severity (info|warn|critical), title, detail, remediation?
+      //   }
+      // The collector is invoked by the gateway at audit time, not on
+      // every block. Reads up to AUDIT_FINDINGS_LIMIT recent rows and
+      // converts each to a finding. Block messages are TRUNCATED before
+      // export (G2: opaque categories beat verbatim user content).
+      const registerSecurityAuditCollector = (
+        api as unknown as {
+          registerSecurityAuditCollector?: (collector: unknown) => void;
+        }
+      ).registerSecurityAuditCollector;
+      if (typeof registerSecurityAuditCollector === "function") {
+        const AUDIT_FINDINGS_LIMIT = 25;
+        try {
+          registerSecurityAuditCollector.call(api, async () => {
+            try {
+              const engine = await getEngine();
+              const pool = extractEnginePool(engine);
+              if (!pool) return [];
+              const { rows } = await (pool as unknown as {
+                query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
+              }).query(
+                `SELECT id, created_at, final_decision, confidence,
+                        reason, detected_categories, blocked, law_violated
+                   FROM ethics_audit
+                  WHERE final_decision IN ('block', 'flag')
+                  ORDER BY created_at DESC
+                  LIMIT $1`,
+                [AUDIT_FINDINGS_LIMIT],
+              );
+              return rows.map((r) => {
+                const decision = String(r.final_decision ?? "block");
+                const categories = Array.isArray(r.detected_categories)
+                  ? (r.detected_categories as string[]).join(", ")
+                  : String(r.detected_categories ?? "policy");
+                const severity =
+                  decision === "block" || r.blocked === true ? "critical" : "warn";
+                const when =
+                  r.created_at instanceof Date
+                    ? r.created_at.toISOString()
+                    : String(r.created_at ?? "");
+                return {
+                  checkId: `celiums-cognition.ethics.${decision}.${String(r.id).slice(0, 8)}`,
+                  severity,
+                  title: `Ethics ${decision} — ${categories}`,
+                  detail:
+                    `Plugin ethics pipeline ${decision} at ${when}` +
+                    (typeof r.confidence === "number"
+                      ? ` (confidence ${r.confidence.toFixed(2)})`
+                      : ""),
+                  remediation:
+                    decision === "block"
+                      ? "Review the offending request in /api/celiums-cognition/ethics/events and adjust the relevant ethics rule if false-positive."
+                      : "Flag-only — no action required; inspect via the Ethics tab of the cognition dashboard.",
+                };
+              });
+            } catch {
+              // ethics_audit may not exist on a fresh stack — return
+              // empty findings rather than fail the gateway audit run.
+              return [];
+            }
+          });
+          api.logger.info(`celiums-cognition: registered security audit collector`);
+        } catch (err) {
+          api.logger.warn?.(
+            `celiums-cognition: failed to register security audit collector: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        api.logger.warn?.(
+          `celiums-cognition: api.registerSecurityAuditCollector not available — gateway audit will not include ethics findings`,
         );
       }
 
