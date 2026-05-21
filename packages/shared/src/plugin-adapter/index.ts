@@ -21,6 +21,7 @@ import {
   ethics,
   makeMigrationsRunner,
   journalWrite,
+  turnContext,
   type CeliumsMemoryConfig,
   type MemoryEngineWithStore,
   type ModuleStore,
@@ -386,27 +387,82 @@ export function createCognitionPlugin(edition: EditionOptions) {
         );
       }
 
-      // ── Auto-recall (before_prompt_build → prependContext) ─────────────
+      // ── Proactive turn-context (before_prompt_build → prependContext) ──
+      //
+      // Mario's call (2026-05-21): "el plugin se vuelve el ADN del software".
+      // The agent shouldn't have to *decide* to call turn_context — the
+      // 8 channels (identity priors + continuity briefing + auto-recalled
+      // memory + forage corpus + ethics-advisory + epistemic-flag +
+      // suggestion-intents + limbic PAD state) must be present on every
+      // turn by default.
+      //
+      // We invoke the engine's `turnContext()` directly (library facade,
+      // not via the MCP tool registry) and inject its composed context
+      // into the system prompt. The composer is token-budgeted ~3000
+      // chars and dedup-guarded internally, so safe to call every turn.
+      //
+      // Falls back to the older lightweight auto-recall path on any
+      // failure: a turn must NEVER be blocked by this hook.
       if (cfg.autoRecall.enabled) {
-        api.on("before_prompt_build", async (event: { prompt?: string; messages?: unknown }) => {
+        api.on("before_prompt_build", async (
+          event: { prompt?: string; messages?: unknown; agentId?: string },
+          hookCtx: { sessionKey?: string; sessionId?: string; agentId?: string; conversationId?: string },
+        ) => {
           const q = (latestUserText(event.messages) ?? event.prompt ?? "").trim();
           if (q.length < 5 || (trivialSkip && trivialSkip.test(q))) return undefined;
           try {
             const engine = await getEngine();
-            const recalled = await withTimeout(
-              engine.recall({ query: q, userId, limit: 5 }),
+            const pool = extractEnginePool(engine);
+            if (!pool) {
+              // No PG pool — fall back to the lightweight recall-only path.
+              const recalled = await withTimeout(
+                engine.recall({ query: q, userId, limit: 5 }),
+                AUTO_RECALL_TIMEOUT_MS,
+              );
+              if (!recalled?.memories?.length || !recalled.assembledContext) return undefined;
+              return { prependContext: recalled.assembledContext };
+            }
+            const ctx = {
+              userId,
+              capabilities: {
+                opencore: true as const,
+                fleet: !!process.env.CELIUMS_FLEET_API_KEY,
+                atlas: !!process.env.CELIUMS_ATLAS_API_KEY,
+                ai: !!process.env.CELIUMS_LLM_API_KEY,
+              },
+              agentId: hookCtx?.agentId ?? event.agentId ?? cfg.agentId,
+              sessionId: hookCtx?.sessionId ?? hookCtx?.sessionKey,
+              conversationId: hookCtx?.conversationId,
+              memoryEngine: engine,
+              pool,
+            };
+            const tc = await withTimeout(
+              turnContext(
+                { user_message: q, max_chars: 3000 },
+                ctx as never,
+              ),
               AUTO_RECALL_TIMEOUT_MS,
             );
-            if (!recalled || !recalled.memories?.length || !recalled.assembledContext) {
+            if (!tc?.context || tc.total_chars === 0) return undefined;
+            api.logger.info?.(
+              `celiums-cognition: turn_context ${tc.total_chars} chars · channels: ${(tc.channels_loaded ?? []).join(",")}`,
+            );
+            return { prependContext: tc.context };
+          } catch (err) {
+            // Best-effort: try the lightweight recall path before giving up.
+            api.logger.warn(`celiums-cognition: turn_context failed (${String(err)}); falling back to recall-only`);
+            try {
+              const engine = await getEngine();
+              const recalled = await withTimeout(
+                engine.recall({ query: q, userId, limit: 5 }),
+                AUTO_RECALL_TIMEOUT_MS,
+              );
+              if (!recalled?.memories?.length || !recalled.assembledContext) return undefined;
+              return { prependContext: recalled.assembledContext };
+            } catch (err2) {
+              api.logger.warn(`celiums-cognition: recall fallback also failed: ${String(err2)}`);
               return undefined;
             }
-            api.logger.info?.(
-              `celiums-cognition: injecting ${recalled.memories.length} memories`,
-            );
-            return { prependContext: recalled.assembledContext };
-          } catch (err) {
-            api.logger.warn(`celiums-cognition: auto-recall failed: ${String(err)}`);
-            return undefined;
           }
         });
       }
