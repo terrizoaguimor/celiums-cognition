@@ -41,6 +41,10 @@ import {
   buildMemoryPromptSupplement,
   buildAgentIdentityPreamble,
 } from "../prompt-supplement/index.js";
+import {
+  makeCeliumsCompactionProvider,
+  type CompactionProvider,
+} from "./compaction.js";
 
 const CURATED_SET = new Set<string>(CURATED_TOOL_NAMES);
 
@@ -368,6 +372,72 @@ export function createCognitionPlugin(edition: EditionOptions) {
       const tools = selectTools(registry, cfg.exposedTools);
       api.logger.info(
         `celiums-cognition: registering ${tools.length}/${registry.length} tools (${cfg.exposedTools})`,
+      );
+
+      // ── Compaction provider — Fase A transversal (2026-05-21) ─────────
+      // When OpenClaw hits the LLM context limit it asks every
+      // registered CompactionProvider for a summary; the operator picks
+      // their preferred one. Our provider does three things in a single
+      // call: (1) persists worth-saving facts from the about-to-be-
+      // dropped messages as memories, (2) writes an `arc` journal entry
+      // tagged ["compaction","auto"], (3) returns a structured summary
+      // string the next turn can read. The slot is not exclusive — the
+      // registry keys by id, so we coexist with memory-core's provider
+      // if one exists.
+      try {
+        const maybeReg = (api as unknown as {
+          registerCompactionProvider?: (p: CompactionProvider) => void;
+        }).registerCompactionProvider;
+        if (typeof maybeReg === "function") {
+          const provider = makeCeliumsCompactionProvider({
+            getEngine,
+            extractPool: extractEnginePool as never,
+            userId,
+            agentId: cfg.agentId,
+            logger: {
+              info: (m) => api.logger.info(`celiums-cognition: compaction: ${m}`),
+              warn: (m) => api.logger.warn?.(`celiums-cognition: compaction: ${m}`),
+            },
+          });
+          maybeReg.call(api, provider);
+          api.logger.info(`celiums-cognition: registered compaction provider (id=${provider.id})`);
+        } else {
+          api.logger.warn?.(
+            `celiums-cognition: api.registerCompactionProvider not available on this host`,
+          );
+        }
+      } catch (err) {
+        api.logger.warn?.(
+          `celiums-cognition: failed to register compaction provider: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      // ── before/after_compaction hooks ─────────────────────────────────
+      // The compaction provider is the heavy lifting. These hooks add
+      // a thin observation/annotation layer: we know WHEN a compaction
+      // started/ended even if the operator picked a different provider,
+      // which lets us correlate journal entries with context events.
+      api.on(
+        "before_compaction",
+        async (
+          event: { messageCount?: number; tokenCount?: number },
+          hookCtx: { agentId?: string; sessionId?: string },
+        ) => {
+          api.logger.info(
+            `celiums-cognition: before_compaction · agent=${hookCtx?.agentId ?? cfg.agentId} · ${event.messageCount ?? "?"} msgs · ${event.tokenCount ?? "?"} tokens`,
+          );
+        },
+      );
+      api.on(
+        "after_compaction",
+        async (
+          _event: unknown,
+          hookCtx: { agentId?: string; sessionId?: string },
+        ) => {
+          api.logger.info(
+            `celiums-cognition: after_compaction · agent=${hookCtx?.agentId ?? cfg.agentId}`,
+          );
+        },
       );
 
       // ── Memory prompt supplement (cache-stable system-prompt section) ──
