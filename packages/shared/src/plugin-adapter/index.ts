@@ -299,11 +299,31 @@ export function createCognitionPlugin(edition: EditionOptions) {
       // ctx.pool (journal_*) or ctx.moduleStore (forage). Reach in once
       // through the public `_store` escape hatch and reuse the SAME pool —
       // avoids opening a second connection pool to the same DB.
+      // Track which pools we've attached our crash-guard listener to so
+      // we don't subscribe twice if the same engine init is observed
+      // through different code paths.
+      const poolErrorBoundPools = new WeakSet<object>();
       const extractEnginePool = (
         engine: MemoryEngineWithStore,
       ): { query: (sql: string, params?: unknown[]) => Promise<unknown> } | undefined => {
-        const store = engine._store as { pg?: { query: (sql: string, params?: unknown[]) => Promise<unknown> } } | undefined;
-        return store?.pg;
+        const store = engine._store as { pg?: { query: (sql: string, params?: unknown[]) => Promise<unknown> } & { on?: (ev: string, cb: (e: Error) => void) => unknown } } | undefined;
+        const pool = store?.pg;
+        // Audit S-018 (2026-05-21 round 2): pg.Pool emits `error` on
+        // connection-level failures (server gone, network blip). Without
+        // a listener Node throws an `Unhandled 'error' event` and the
+        // gateway crashes — taking down EVERY plugin, not just ours.
+        // Attach once per pool. We log + swallow; the next query will
+        // either retry or surface the real error to the handler, which
+        // already routes through sanitizeDbError.
+        if (pool && typeof pool.on === "function" && !poolErrorBoundPools.has(pool as object)) {
+          poolErrorBoundPools.add(pool as object);
+          pool.on("error", (err: Error) => {
+            api.logger.warn?.(
+              `celiums-cognition: pg pool error (handled, process kept alive): ${err?.message ?? String(err)}`,
+            );
+          });
+        }
+        return pool;
       };
 
       // moduleStore — knowledge corpus over its OWN database. Default
@@ -541,6 +561,31 @@ export function createCognitionPlugin(edition: EditionOptions) {
         );
       }
 
+      // Per-agent throttle for auto-journal writes — audit S-017
+      // (2026-05-21 round 2). The gateway might spawn a flurry of
+      // subagents for one user task; each one's agent_end fires our
+      // hook and inserts a row. Without a cap, a runaway loop or a
+      // malicious agent can flood agent_journal. Bounded sliding
+      // window per agent_id: max 30 entries per 5 minutes. Excess
+      // entries are dropped silently — the operator's own
+      // journal_write calls are unaffected, only the auto baseline
+      // is suppressed.
+      const autoJournalThrottle = new Map<string, number[]>();
+      const AUTO_JOURNAL_MAX = 30;
+      const AUTO_JOURNAL_WINDOW_MS = 5 * 60 * 1000;
+      const autoJournalShouldFire = (agentId: string): boolean => {
+        const now = Date.now();
+        const cutoff = now - AUTO_JOURNAL_WINDOW_MS;
+        const hits = (autoJournalThrottle.get(agentId) ?? []).filter((t) => t > cutoff);
+        if (hits.length >= AUTO_JOURNAL_MAX) {
+          autoJournalThrottle.set(agentId, hits);
+          return false;
+        }
+        hits.push(now);
+        autoJournalThrottle.set(agentId, hits);
+        return true;
+      };
+
       // ── Auto-journal (agent_end → agent_journal) ───────────────────────
       // Mario's call (2026-05-20): the journal can't be left as a manual
       // tool — the agent has to be RAILED into writing entries so it can
@@ -573,6 +618,16 @@ export function createCognitionPlugin(edition: EditionOptions) {
             if (userText.trim().length < cfg.journal.autoWrite.minTurnLength) return;
             // Skip if the agent didn't produce anything substantial either.
             if (assistantText.trim().length < 20) return;
+            // Per-agent flood guard (S-017): cap auto-journal writes at
+            // 30 per 5 minutes per agent_id. Operator's deliberate
+            // `journal_write` calls are unaffected.
+            const journalAgentId = ctx?.agentId ?? event.agentId ?? cfg.agentId;
+            if (!autoJournalShouldFire(journalAgentId)) {
+              api.logger.warn?.(
+                `celiums-cognition: auto-journal throttled for agent=${journalAgentId}`,
+              );
+              return;
+            }
 
             // entry_type heuristic
             let entryType: JournalEntryType = "reflection";

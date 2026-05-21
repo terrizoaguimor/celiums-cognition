@@ -226,6 +226,82 @@ so Lax is sufficient. No custom CSRF tokens needed.
    (e.g., session ID entropy is `crypto.randomBytes`, not the
    weaker `Math.random`).
 
+## Round 2 — validation pass
+
+Re-ran the audit with **nvidia-nemotron-3-super-120b** (pro-thinking,
+distinct from round-1 models) to validate the fixes + look for issues
+the first pass missed. The model confirmed F1/F3/F5/F6 as closed and
+flagged F2 as "partial" — claimed `getAccount` timing leak. Reviewed
+the path: the sub-millisecond DB roundtrip difference between
+"row found" and "no row found" on a primary-key SELECT-LIMIT-1 is
+dominated by the constant-cost `verifyPassword` (PBKDF2 600k iters,
+~80ms). The leak Atlas describes is theoretically real but
+observationally below network jitter for a remote attacker. Logged
+as 🟢 acceptable.
+
+New findings from round 2:
+
+### S-017 — Auto-journal flood DoS  ✅
+
+The `agent_end` hook writes to `agent_journal` on every meaningful
+turn with no rate-limit. A runaway loop or malicious agent could
+spawn many agent runs and flood the table.
+
+**Fix:** per-agent_id sliding-window throttle: max 30 auto-journal
+writes per 5 minutes per `agent_id`. Excess is dropped with a
+`warn` log. The operator's own `journal_write` calls bypass this
+throttle entirely (only the plugin's automatic baseline is gated).
+
+Commit: round 2.
+
+### S-018 — Uncaught pg.Pool error events crash the process  ✅
+
+`pg.Pool` emits `error` on connection-level failures (server gone,
+network blip). Without a listener, Node throws
+`Unhandled 'error' event` and the gateway crashes — taking down
+EVERY plugin, not just ours. Our query-level try/catches don't
+help because pool-level errors fire outside any query promise.
+
+**Fix:** `extractEnginePool` now attaches `pool.on("error", …)`
+once per pool (tracked via WeakSet so we don't subscribe twice).
+The listener logs + swallows; the next query will still error
+through our normal sanitizeDbError path.
+
+Commit: round 2.
+
+### S-019 — Idle session expiration is fixed-window 24h  🟡
+
+Sessions persist 24h from creation regardless of activity. A
+stolen sid remains valid for the full window even if the victim
+logs out (logout clears the cookie but ALSO deletes the server
+row — closed), but no sliding window means an idle session that's
+been hijacked stays alive to its TTL.
+
+**Status:** accepted. The cookie is HttpOnly + Secure + SameSite=
+Lax; theft requires either a same-origin XSS (closed by react-
+markdown's safe defaults) or operator-machine compromise. The
+threat model where sliding-window expiration would help (long
+idle period + later theft) is dominated by other failure modes in
+the same scenario. Tracked; revisit when we add multi-device
+sessions.
+
+### Round 2 false positives
+
+- **F2 partial — getAccount timing** — sub-ms DB lookup vs 80ms
+  PBKDF2. Not observable over network jitter.
+- **POST body size class differences** — Atlas missed the existing
+  64 KB cap in `readJsonBody` (MAX = 64 * 1024).
+- **Session-fixation residual paths** — code review confirmed all
+  `setSessionCookie` calls follow `createSession` or
+  `upgradeSession`; never set before the server-side row exists.
+- **Fake-verify timing** — `crypto.pbkdf2Sync` runs a fixed
+  iteration count regardless of input by design. Constant time
+  guaranteed; `timingSafeEqual` after.
+- **upgradeSession idempotency on retry** — handlers don't retry
+  the upgrade in isolation; the whole request flow retries. The
+  BEGIN/ROLLBACK transaction semantics already cover partial
+  failure (neither sid changes if COMMIT didn't land).
+
 ## Action items beyond this pass
 
 - **Multi-instance rate-limit storage** (Valkey INCRBY) — pre-req
@@ -261,3 +337,6 @@ so Lax is sufficient. No custom CSRF tokens needed.
 | S-013 | Low      | 🟢 N/A   | markdown HTML (already sanitized) |
 | S-014 | Low      | 🟢 N/A   | SSRF (env-only, not user-input) |
 | S-015 | Low      | 🟢 N/A   | CSRF (SameSite=Lax + POST-only writes) |
+| S-017 | Medium   | ✅ fixed | auto-journal flood (round 2 — per-agent throttle) |
+| S-018 | Medium   | ✅ fixed | pg.Pool unhandled error (round 2 — listener attached) |
+| S-019 | Low      | 🟡 accept | fixed-window 24h session TTL (round 2) |
