@@ -1120,10 +1120,12 @@ body {
   background: var(--c-glass-strong);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  /* Brand gradient line on the left edge — the only "border" on the
-   * drawer, replacing the old flat border for more depth. */
-  border-left: 1px solid transparent;
-  border-image: var(--celiums-grad-strong) 1;
+  /* Flat 1px green-tinted left border — `border-image` with a gradient
+   * was producing a visual gap between the drawer and the right
+   * viewport edge (the implicit unset border-right received some of
+   * the image cycle in WebKit). Flat border avoids the artifact and
+   * still anchors the drawer visually. */
+  border-left: 1px solid var(--c-green-soft);
   z-index: 50;
   transform: translateX(100%);
   transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
