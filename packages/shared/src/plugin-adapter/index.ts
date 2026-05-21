@@ -648,6 +648,8 @@ export function createCognitionPlugin(edition: EditionOptions) {
           };
           const ctx: UiRouterContext = {
             pool: pool as unknown as UiRouterContext["pool"],
+            engine: engine as unknown as UiRouterContext["engine"],
+            userId,
             engineConfig: ec,
             teiUrl: process.env.TEI_URL ?? "http://127.0.0.1:8080",
             plugin: {

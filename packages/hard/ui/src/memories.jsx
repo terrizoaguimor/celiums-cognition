@@ -25,6 +25,7 @@ export function Memories({ showToast }) {
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [valence, setValence] = useState("any");    // any | positive | neutral | negative
+  const [bucket, setBucket] = useState("all");      // all | today | yesterday | week | month | year
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState(null);
 
@@ -32,14 +33,16 @@ export function Memories({ showToast }) {
     const t = setTimeout(() => { setDebouncedQ(q); setOffset(0); }, DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [q]);
+  useEffect(() => { setOffset(0); }, [bucket]);
 
   const memoriesQ = useQuery(
     () => fetchMemories({
       q: debouncedQ.trim() || null,
+      bucket: bucket !== "all" ? bucket : null,
       limit: PAGE_SIZE,
       offset,
     }),
-    [debouncedQ, offset],
+    [debouncedQ, bucket, offset],
   );
 
   const all = memoriesQ.data?.memories ?? [];
@@ -110,6 +113,15 @@ export function Memories({ showToast }) {
           <option value="neutral">Neutral</option>
           <option value="negative">Negative (≤ −0.3)</option>
         </select>
+        <select value={bucket} onChange={(e) => setBucket(e.target.value)}
+          className="celiums-input" style={{ width: "auto", padding: "8px 10px", fontSize: 13 }}>
+          <option value="all">Any time</option>
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="week">Last 7 days</option>
+          <option value="month">Last 30 days</option>
+          <option value="year">Last 365 days</option>
+        </select>
       </div>
 
       <div className="cc-results-head">
@@ -179,7 +191,10 @@ export function MemoryRow({ m, selected, onClick }) {
           {text.length > 280 ? text.slice(0, 280) + "…" : text}
         </div>
         <div className="meta" style={{ marginTop: 10 }}>
-          <span style={{ fontSize: 11.5, color: "var(--c-fg-subtle)" }}>{fmtRelative(m.created_at)}</span>
+          <span style={{ fontSize: 11.5, color: "var(--c-fg-subtle)" }}
+                title={fmtAbsoluteLocal(m.created_at)}>
+            {fmtRelative(m.created_at)} · {fmtDateShort(m.created_at)}
+          </span>
           <span style={{ color: "var(--c-fg-faint)" }}>·</span>
           {m.memory_type && <span className="celiums-chip">{m.memory_type}</span>}
           {m.scope && <span className="celiums-chip">{m.scope}</span>}
@@ -194,6 +209,38 @@ export function MemoryRow({ m, selected, onClick }) {
       </div>
     </div>
   );
+}
+
+/* Date helpers — show the user the WEEKDAY + DAY + TIME so they can ask
+ * "qué pasó X día" and visually scan back. Falls back to relative time
+ * for the past-hour bucket where absolute dates clutter without helping. */
+export function fmtDateShort(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const sameYear = d.getFullYear() === now.getFullYear();
+    return d.toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      ...(sameYear ? {} : { year: "numeric" }),
+    });
+  } catch { return "—"; }
+}
+
+export function fmtAbsoluteLocal(iso) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch { return "—"; }
 }
 
 /* VAD axis bar.
@@ -234,7 +281,10 @@ export function MemoryDrawer({ m, onClose, showToast }) {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2>Memory · {String(m.id).slice(0, 8)}…</h2>
-          <div className="slug">{fmtRelative(m.created_at)} · {m.memory_type ?? "—"} · {m.scope ?? "—"}</div>
+          <div className="slug">
+            {fmtAbsoluteLocal(m.created_at)} · {fmtRelative(m.created_at)}
+            {" · "}{m.memory_type ?? "—"} · {m.scope ?? "—"}
+          </div>
         </div>
         <button className="cc-icon-btn" onClick={onClose}><Ico.x width={14} height={14} /></button>
       </div>

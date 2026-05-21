@@ -87,6 +87,17 @@ function probeListener(
 
 export interface UiRouterContext {
   pool: Pool;
+  /** Engine reference for getLimbicState / getCircadianTelemetry. The
+   *  adapter wires this from the lazy engine init; null means engine
+   *  isn't ready yet (very early in startup) and the endpoints will
+   *  degrade with 503. */
+  engine?: {
+    getLimbicState?: (userId: string) => Promise<unknown>;
+    getCircadianTelemetry?: (userId: string) => Promise<unknown>;
+  };
+  /** User id used by the single-account plugin to scope memories /
+   *  limbic state. Matches cfg.userId (default "default"). */
+  userId: string;
   /** Engine config the adapter resolved (for endpoint metadata). */
   engineConfig: {
     databaseUrl?: string;
@@ -485,36 +496,89 @@ async function memoriesList(
   res: ServerResponse,
 ): Promise<void> {
   const { limit, offset } = paginate(req);
-  const q = parseQuery(req).get("q")?.trim() ?? "";
+  const params0 = parseQuery(req);
+  const q = params0.get("q")?.trim() ?? "";
+  const bucket = (params0.get("bucket") ?? "all").toLowerCase();
+  const fromIso = params0.get("from") ?? null;
+  const toIso = params0.get("to") ?? null;
   try {
-    const params: unknown[] = [];
-    let where = "";
+    const where: string[] = [];
+    const args: unknown[] = [];
     if (q) {
-      params.push(`%${q}%`);
+      args.push(`%${q}%`);
       // idx_memories_content_trgm makes ILIKE practical at scale.
-      where = `WHERE content ILIKE $${params.length}`;
+      where.push(`content ILIKE $${args.length}`);
     }
-    params.push(limit, offset);
+    // Date bucket — relative ranges resolved server-side using the user's
+    // local timezone (so "today" means today in Bogota, not in UTC).
+    if (bucket && bucket !== "all" && bucket !== "custom") {
+      // Resolve user's timezone offset (hours)
+      let tzOffset = 0;
+      try {
+        const { rows: prof } = await ctx.pool.query(
+          `SELECT timezone_offset FROM user_profiles WHERE user_id = $1 LIMIT 1`,
+          [ctx.userId],
+        );
+        if (prof[0]) tzOffset = Number(prof[0].timezone_offset ?? 0);
+      } catch { /* fall back to UTC */ }
+      args.push(tzOffset);
+      const tzIdx = args.length;
+      // Compute "now in user's timezone" by adding the offset
+      switch (bucket) {
+        case "today":
+          where.push(`created_at >= date_trunc('day', now() + ($${tzIdx}::numeric * INTERVAL '1 hour')) - ($${tzIdx}::numeric * INTERVAL '1 hour')`);
+          break;
+        case "yesterday":
+          where.push(`created_at >= date_trunc('day', now() + ($${tzIdx}::numeric * INTERVAL '1 hour')) - INTERVAL '1 day' - ($${tzIdx}::numeric * INTERVAL '1 hour')
+            AND created_at < date_trunc('day', now() + ($${tzIdx}::numeric * INTERVAL '1 hour')) - ($${tzIdx}::numeric * INTERVAL '1 hour')`);
+          break;
+        case "week":
+          where.push(`created_at >= now() - INTERVAL '7 days'`);
+          args.pop(); // tz unused for raw 7-day window
+          break;
+        case "month":
+          where.push(`created_at >= now() - INTERVAL '30 days'`);
+          args.pop();
+          break;
+        case "year":
+          where.push(`created_at >= now() - INTERVAL '365 days'`);
+          args.pop();
+          break;
+      }
+    }
+    // Explicit ISO range overrides bucket
+    if (fromIso) {
+      args.push(fromIso);
+      where.push(`created_at >= $${args.length}::timestamptz`);
+    }
+    if (toIso) {
+      args.push(toIso);
+      where.push(`created_at < $${args.length}::timestamptz`);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const filterArgs = [...args];
+    args.push(limit, offset);
     const { rows } = await ctx.pool.query(
       `SELECT id, user_id, project_id, session_id, content, summary,
               memory_type, scope, importance, emotional_valence,
               emotional_arousal, emotional_dominance, confidence,
               strength, retrieval_count, last_retrieved_at, state,
               tags, created_at, updated_at
-         FROM memories ${where}
+         FROM memories ${whereSql}
         ORDER BY created_at DESC
-        LIMIT $${params.length - 1} OFFSET $${params.length}`,
-      params,
+        LIMIT $${args.length - 1} OFFSET $${args.length}`,
+      args,
     );
     const { rows: countRows } = await ctx.pool.query(
-      `SELECT count(*)::int AS n FROM memories ${q ? "WHERE content ILIKE $1" : ""}`,
-      q ? [`%${q}%`] : [],
+      `SELECT count(*)::int AS n FROM memories ${whereSql}`,
+      filterArgs,
     );
     sendJson(res, 200, {
       memories: rows,
       total: countRows[0]?.n ?? 0,
       limit,
       offset,
+      bucket: bucket || "all",
     });
   } catch (err) {
     sendError(res, 500, "DB_ERROR", String(err));
@@ -708,6 +772,186 @@ async function activityRecent(
   }
 }
 
+/** GET /api/celiums-cognition/limbic-state
+ *  Current PAD + circadian telemetry for the operator's user_id. The
+ *  agent's "felt state" right now, not a historical snapshot — getState()
+ *  inside the engine applies the fresh-on-read rhythm patch so the value
+ *  tracks real time. */
+async function limbicState(
+  ctx: UiRouterContext,
+  _req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (!ctx.engine?.getLimbicState || !ctx.engine?.getCircadianTelemetry) {
+    return sendError(res, 503, "ENGINE_NOT_READY", "engine not initialized yet");
+  }
+  try {
+    const [state, telemetry] = await Promise.all([
+      ctx.engine.getLimbicState(ctx.userId),
+      ctx.engine.getCircadianTelemetry(ctx.userId),
+    ]);
+    const s = state as Record<string, unknown> | null;
+    const t = telemetry as Record<string, unknown> | null;
+    // Also surface the stored timezone for the user (the engine resolves
+    // it but doesn't put it on the telemetry object directly).
+    let tz: { iana: string; offset_minutes: number } | null = null;
+    try {
+      const { rows } = await ctx.pool.query(
+        `SELECT timezone_iana, timezone_offset
+           FROM user_profiles WHERE user_id = $1 LIMIT 1`,
+        [ctx.userId],
+      );
+      if (rows[0]) {
+        tz = {
+          iana: String(rows[0].timezone_iana ?? "UTC"),
+          offset_minutes: Math.round(Number(rows[0].timezone_offset ?? 0) * 60),
+        };
+      }
+    } catch { /* user_profiles row may not exist yet */ }
+    sendJson(res, 200, {
+      mood: s
+        ? {
+            pleasure: Number(s.pleasure ?? 0),
+            arousal: Number(s.arousal ?? 0),
+            dominance: Number(s.dominance ?? 0),
+          }
+        : null,
+      circadian: t
+        ? {
+            time_of_day: String(t.timeOfDay ?? ""),
+            local_hour: Number(t.localHour ?? 0),
+            rhythm: Number(t.rhythmComponent ?? 0),
+            arousal_after_regulation: Number(t.arousalAfterRegulation ?? 0),
+          }
+        : null,
+      timezone: tz,
+    });
+  } catch (err) {
+    sendError(res, 500, "LIMBIC_ERROR", err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** GET /api/celiums-cognition/timezones
+ *  Full IANA timezone list (≈400 entries) so the Settings tab can render
+ *  a searchable picker. Cached for an hour at the edge. */
+async function timezones(
+  _ctx: UiRouterContext,
+  _req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  // Node ≥ 18 exposes the ICU-backed enumeration. Fall back to a small
+  // hard-coded set if the runtime is built without ICU.
+  const intlAny = Intl as unknown as {
+    supportedValuesOf?: (key: string) => string[];
+  };
+  const list = typeof intlAny.supportedValuesOf === "function"
+    ? intlAny.supportedValuesOf("timeZone")
+    : ["UTC", "America/Bogota", "America/New_York", "Europe/Madrid"];
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  sendJson(res, 200, { timezones: list });
+}
+
+/** GET /api/celiums-cognition/settings/timezone
+ *  Returns the current timezone for the operator's user_id (default UTC). */
+async function settingsTimezoneGet(
+  ctx: UiRouterContext,
+  _req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  try {
+    const { rows } = await ctx.pool.query(
+      `SELECT timezone_iana, timezone_offset
+         FROM user_profiles WHERE user_id = $1 LIMIT 1`,
+      [ctx.userId],
+    );
+    const row = rows[0] ?? { timezone_iana: "UTC", timezone_offset: 0 };
+    sendJson(res, 200, {
+      iana: String(row.timezone_iana),
+      offset_minutes: Math.round(Number(row.timezone_offset) * 60),
+    });
+  } catch (err) {
+    sendError(res, 500, "DB_ERROR", String(err));
+  }
+}
+
+/** PUT /api/celiums-cognition/settings/timezone  { iana: "America/Bogota" }
+ *  Persists the IANA timezone for the user. Computes and stores the
+ *  offset (in hours, matching the existing column convention). Engine's
+ *  CircadianEngine reads from user_profiles on next telemetry pull. */
+async function settingsTimezonePut(
+  ctx: UiRouterContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  let body: { iana?: unknown };
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return sendError(res, 400, "BAD_BODY", "invalid JSON body");
+  }
+  const iana = String(body.iana ?? "").trim();
+  if (!iana) return sendError(res, 400, "INVALID_INPUT", "iana required");
+  // Validate via Intl — throws on bogus IANA strings.
+  let offsetHours = 0;
+  try {
+    const now = new Date();
+    const dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: iana,
+      timeZoneName: "shortOffset",
+    });
+    const parts = dtf.formatToParts(now);
+    const tzName = parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+    // tzName like "GMT-5" or "GMT+05:30" → parse.
+    const m = tzName.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+    if (m) {
+      const sign = m[1] === "-" ? -1 : 1;
+      const h = parseInt(m[2] ?? "0", 10);
+      const mn = parseInt(m[3] ?? "0", 10);
+      offsetHours = sign * (h + mn / 60);
+    }
+  } catch {
+    return sendError(res, 400, "INVALID_TIMEZONE", `unknown IANA timezone: ${iana}`);
+  }
+  try {
+    await ctx.pool.query(
+      `INSERT INTO user_profiles (user_id, timezone_iana, timezone_offset)
+         VALUES ($1, $2, $3)
+       ON CONFLICT (user_id) DO UPDATE
+         SET timezone_iana = EXCLUDED.timezone_iana,
+             timezone_offset = EXCLUDED.timezone_offset,
+             updated_at = now()`,
+      [ctx.userId, iana, offsetHours],
+    );
+    sendJson(res, 200, { iana, offset_minutes: Math.round(offsetHours * 60) });
+  } catch (err) {
+    sendError(res, 500, "DB_ERROR", String(err));
+  }
+}
+
+// Helper for the settings POST body parse (already exists in auth-routes
+// but is module-local; duplicate the lightweight one here).
+async function readJsonBody<T = unknown>(req: IncomingMessage): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const MAX = 32 * 1024;
+    req.on("data", (c: Buffer) => {
+      total += c.length;
+      if (total > MAX) { req.destroy(); reject(new Error("body too large")); return; }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      try {
+        const txt = Buffer.concat(chunks).toString("utf-8");
+        resolve(txt.length === 0 ? ({} as T) : (JSON.parse(txt) as T));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
 /** GET /api/celiums-cognition/version-check
  *  Stub: returns current === latest. Wire to ClawHub/GitHub release feed later. */
 async function versionCheck(
@@ -740,6 +984,9 @@ export interface UiRoutes {
   ethicsEvents: UiRouteHandler;
   activitySparklines: UiRouteHandler;
   activityRecent: UiRouteHandler;
+  limbicState: UiRouteHandler;
+  timezones: UiRouteHandler;
+  settingsTimezone: UiRouteHandler;
   versionCheck: UiRouteHandler;
   /** Prefix handler that dispatches /api/celiums-cognition/* by parsing the
    *  path. Use this single handler with registerHttpRoute({match:"prefix"}). */
@@ -767,6 +1014,14 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
       activitySparklines(ctx, req, res),
     activityRecent: (req: IncomingMessage, res: ServerResponse) =>
       activityRecent(ctx, req, res),
+    limbicState: (req: IncomingMessage, res: ServerResponse) =>
+      limbicState(ctx, req, res),
+    timezones: (req: IncomingMessage, res: ServerResponse) =>
+      timezones(ctx, req, res),
+    settingsTimezone: (req: IncomingMessage, res: ServerResponse) =>
+      req.method === "PUT"
+        ? settingsTimezonePut(ctx, req, res)
+        : settingsTimezoneGet(ctx, req, res),
     versionCheck: (req: IncomingMessage, res: ServerResponse) =>
       versionCheck(ctx, req, res),
   };
@@ -802,6 +1057,15 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
       return auth.dispatch(req, res, p.replace(/^\/auth/, "") || "/");
     }
 
+    // Settings PUT/GET — handled before the GET-only gate below.
+    if (p === "/settings/timezone") {
+      if (req.method !== "GET" && req.method !== "PUT") {
+        return sendError(res, 405, "METHOD_NOT_ALLOWED", `${req.method} not allowed`);
+      }
+      if (!(await requireActiveSession(req, res))) return;
+      return h.settingsTimezone(req, res);
+    }
+
     if (req.method !== "GET") {
       return sendError(res, 405, "METHOD_NOT_ALLOWED", `${req.method} not allowed`);
     }
@@ -825,6 +1089,8 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
     if (p === "/ethics/events") return h.ethicsEvents(req, res);
     if (p === "/activity/sparklines") return h.activitySparklines(req, res);
     if (p === "/activity/recent") return h.activityRecent(req, res);
+    if (p === "/limbic-state") return h.limbicState(req, res);
+    if (p === "/timezones") return h.timezones(req, res);
     sendError(res, 404, "NOT_FOUND", `no route for ${p}`);
   };
 

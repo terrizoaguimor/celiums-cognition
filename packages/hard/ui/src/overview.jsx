@@ -6,10 +6,11 @@ import React, { useState } from "react";
 import {
   fetchHealth, fetchCounts, fetchPillars,
   fetchSparklines, fetchRecent, fetchVersionCheck,
+  fetchLimbicState,
   pillarMeta, useQuery,
 } from "./data.js";
 import {
-  PageHead, SectionCard, Sparkline, StatusDot,
+  PageHead, SectionCard, Sparkline, StatusDot, HelpPopover,
   fmtBytes, fmtCount, fmtRelative,
 } from "./cc-shell.jsx";
 
@@ -71,6 +72,11 @@ export function Overview() {
           </>
         }
       />
+
+      {/* Agent state — PAD + circadian (live every mount) */}
+      <div style={{ marginBottom: 18 }}>
+        <AgentStateCard />
+      </div>
 
       {/* Stack health */}
       <div style={{ marginBottom: 18 }}>
@@ -220,6 +226,154 @@ function fmtTime(iso) {
   } catch {
     return "—";
   }
+}
+
+/* Agent state card — live PAD + circadian. Always refetches on mount. */
+export function AgentStateCard() {
+  const stateQ = useQuery(fetchLimbicState, []);
+  const data = stateQ.data;
+  const mood = data?.mood;
+  const c = data?.circadian;
+  const tz = data?.timezone;
+
+  return (
+    <SectionCard
+      title="Agent state"
+      count={c ? c.time_of_day : "—"}
+      action={
+        <HelpPopover title="What this shows">
+          <p style={{ margin: "0 0 8px" }}>
+            Real-time output of the engine's <code>LimbicEngine</code> and
+            <code> CircadianEngine</code> for your user_id. Values are
+            recomputed fresh-on-read — the rhythm component tracks actual
+            time, the PAD axes carry the latest update from the agent's
+            interactions.
+          </p>
+          <ul style={{ margin: "8px 0", paddingLeft: 18, lineHeight: 1.55 }}>
+            <li><strong>P/A/D</strong>: Pleasure (−1…+1), Arousal (0…1),
+              Dominance (0…1). The agent's affect snapshot RIGHT NOW.</li>
+            <li><strong>Rhythm</strong>: the sinusoidal 24h baseline
+              (range ~ −0.3…+0.3) before the 12 external factors
+              modulate it.</li>
+            <li><strong>Time-of-day bucket</strong>: derived from local
+              hour using the user_profile timezone. Set yours in Settings
+              if it says UTC.</li>
+          </ul>
+        </HelpPopover>
+      }>
+      <div style={{ padding: "14px 18px" }}>
+        {stateQ.loading && <SkeletonRows n={2} />}
+        {!stateQ.loading && !mood && !c && (
+          <EmptyHint>
+            Engine hasn't computed a limbic state yet. Have a conversation
+            with an agent through this gateway to seed it.
+          </EmptyHint>
+        )}
+        {!stateQ.loading && (mood || c) && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+            {/* PAD axes */}
+            <div>
+              <div style={{ fontSize: 11, color: "var(--c-fg-subtle)", textTransform: "uppercase",
+                            letterSpacing: 0.4, marginBottom: 8, fontFamily: "var(--font-mono)" }}>
+                Affect · PAD
+              </div>
+              {mood ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <PADBar label="pleasure"  value={mood.pleasure} signed />
+                  <PADBar label="arousal"   value={mood.arousal} />
+                  <PADBar label="dominance" value={mood.dominance} />
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "var(--c-fg-subtle)" }}>— no mood snapshot yet</div>
+              )}
+            </div>
+            {/* Circadian */}
+            <div>
+              <div style={{ fontSize: 11, color: "var(--c-fg-subtle)", textTransform: "uppercase",
+                            letterSpacing: 0.4, marginBottom: 8, fontFamily: "var(--font-mono)" }}>
+                Circadian
+              </div>
+              {c ? (
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", rowGap: 8, columnGap: 12, fontSize: 13 }}>
+                  <div style={{ color: "var(--c-fg-muted)" }}>time of day</div>
+                  <div style={{ color: "var(--c-fg)", fontWeight: 500 }}>
+                    {humanizeTimeOfDay(c.time_of_day)}
+                  </div>
+                  <div style={{ color: "var(--c-fg-muted)" }}>local hour</div>
+                  <div style={{ color: "var(--c-fg)", fontFamily: "var(--font-mono)" }}>
+                    {Number(c.local_hour).toFixed(2)}
+                  </div>
+                  <div style={{ color: "var(--c-fg-muted)" }}>rhythm</div>
+                  <div style={{ color: "var(--c-fg)", fontFamily: "var(--font-mono)" }}>
+                    {c.rhythm.toFixed(3)}
+                  </div>
+                  <div style={{ color: "var(--c-fg-muted)" }}>arousal post-reg.</div>
+                  <div style={{ color: "var(--c-fg)", fontFamily: "var(--font-mono)" }}>
+                    {c.arousal_after_regulation.toFixed(3)}
+                  </div>
+                  <div style={{ color: "var(--c-fg-muted)" }}>timezone</div>
+                  <div style={{ color: "var(--c-fg)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                    {tz?.iana ?? "UTC"}
+                    {tz?.iana === "UTC" && (
+                      <span style={{ color: "var(--c-amber-text)", marginLeft: 6, fontSize: 11 }}>
+                        (set in Settings)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "var(--c-fg-subtle)" }}>— no rhythm computed</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </SectionCard>
+  );
+}
+
+function PADBar({ label, value, signed = false }) {
+  const v = Math.max(signed ? -1 : 0, Math.min(1, Number(value) || 0));
+  const pct = signed ? Math.abs(v) * 50 : v * 100;
+  const left = signed ? `${v < 0 ? 50 - pct : 50}%` : "0%";
+  const color = signed
+    ? v >= 0 ? "var(--c-green)" : "var(--c-red, #ef4444)"
+    : "var(--c-green)";
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 56px", gap: 10, alignItems: "center", fontSize: 12 }}>
+      <span style={{ color: "var(--c-fg-muted)", fontFamily: "var(--font-mono)" }}>{label}</span>
+      <span style={{
+        position: "relative", height: 6, background: "var(--c-divider)", borderRadius: 3,
+      }}>
+        {signed && (
+          <span style={{
+            position: "absolute", left: "50%", top: -1, bottom: -1, width: 1,
+            background: "var(--c-fg-faint)",
+          }} />
+        )}
+        <span style={{
+          position: "absolute", top: 0, bottom: 0, left, width: `${pct}%`,
+          background: color, borderRadius: 3,
+        }} />
+      </span>
+      <span style={{ fontFamily: "var(--font-mono)", color: "var(--c-fg)", textAlign: "right" }}>
+        {v.toFixed(2)}
+      </span>
+    </div>
+  );
+}
+
+function humanizeTimeOfDay(bucket) {
+  const map = {
+    "deep-night": "Deep night",
+    "morning-rise": "Morning rise",
+    "morning-peak": "Morning peak",
+    "afternoon-peak": "Afternoon peak",
+    "afternoon-decline": "Afternoon decline",
+    "evening-wind-down": "Evening wind-down",
+    "night-rest": "Night rest",
+  };
+  return map[bucket] ?? bucket;
 }
 
 export function SkeletonRows({ n = 3 }) {
