@@ -23,6 +23,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import * as net from "node:net";
 import { Pool } from "pg";
 import { makeAuthRouter, type AuthRouter } from "./auth-routes.js";
+import { buildMemoryPromptSupplement } from "./prompt-supplement/index.js";
+import { CURATED_TOOL_NAMES } from "./tool-curator/index.js";
 
 // ─── small helpers ─────────────────────────────────────────────────────
 
@@ -952,6 +954,86 @@ async function readJsonBody<T = unknown>(req: IncomingMessage): Promise<T> {
   });
 }
 
+/** GET /api/celiums-cognition/preview-prompt?msg=…&tools=curated|all
+ *
+ *  Diagnostic endpoint — reuses the SAME composer the gateway hooks run
+ *  on every real turn (`buildMemoryPromptSupplement` + the engine's
+ *  `turnContext`) and returns what an LLM would actually see in its
+ *  system prompt for the given user message. Useful to verify the
+ *  supplement is registered and the dynamic channels are firing.
+ *
+ *  Not a security-sensitive endpoint, but gated to active session
+ *  anyway — the composed text quotes user memories. */
+async function previewPrompt(
+  ctx: UiRouterContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const q = parseQuery(req);
+  const msg = q.get("msg")?.trim() || "qué hablamos ayer?";
+  const toolsMode = q.get("tools") === "all" ? "all" : "curated";
+
+  // Static section — what `registerMemoryPromptSupplement` registered.
+  const toolSet =
+    toolsMode === "all"
+      ? new Set([
+          "recall", "remember", "forage", "sense",
+          "journal_write", "journal_recall", "journal_arc",
+          "journal_introspect", "journal_supersede", "journal_verify_chain",
+          "journal_dialogue",
+          "ethics_trace", "ethics_audit", "ethics_lookup",
+          "map_network", "absorb", "bloom", "cultivate",
+          "synthesize", "decompose", "construct", "pollinate",
+          "turn_context", "turn_after", "compact_checkpoint",
+        ])
+      : new Set<string>(CURATED_TOOL_NAMES);
+  const supplementLines = buildMemoryPromptSupplement(toolSet);
+
+  // Dynamic section — what `turnContext` would compose. We have to
+  // import the engine lazily here because ui-routes is engine-free
+  // and we don't want to add a hard dep just for this preview path.
+  let dynamic: { context: string; channels_loaded?: string[]; total_chars?: number } | null = null;
+  let dynamicError: string | null = null;
+  try {
+    const mod = await import("@celiumsai/cognition-engine");
+    const turnContext = (mod as { turnContext?: (i: unknown, c: unknown) => Promise<unknown> }).turnContext;
+    if (typeof turnContext !== "function") {
+      dynamicError = "engine.turnContext not exported by this build";
+    } else {
+      const tc = await turnContext(
+        { user_message: msg, max_chars: 3000 },
+        {
+          userId: ctx.userId,
+          capabilities: { opencore: true, fleet: false, atlas: false, ai: false },
+          agentId: "preview-prompt",
+          sessionId: `preview-${Date.now()}`,
+          memoryEngine: ctx.engine,
+          pool: ctx.pool,
+        },
+      );
+      dynamic = tc as { context: string; channels_loaded?: string[]; total_chars?: number };
+    }
+  } catch (err) {
+    dynamicError = err instanceof Error ? err.message : String(err);
+  }
+
+  sendJson(res, 200, {
+    user_message: msg,
+    tools_mode: toolsMode,
+    static_supplement: {
+      lines: supplementLines,
+      total_chars: supplementLines.join("\n").length,
+    },
+    dynamic_turn_context: dynamic
+      ? {
+          context: dynamic.context,
+          channels_loaded: dynamic.channels_loaded ?? [],
+          total_chars: dynamic.total_chars ?? dynamic.context.length,
+        }
+      : { error: dynamicError ?? "(none)" },
+  });
+}
+
 /** GET /api/celiums-cognition/version-check
  *  Stub: returns current === latest. Wire to ClawHub/GitHub release feed later. */
 async function versionCheck(
@@ -987,6 +1069,7 @@ export interface UiRoutes {
   limbicState: UiRouteHandler;
   timezones: UiRouteHandler;
   settingsTimezone: UiRouteHandler;
+  previewPrompt: UiRouteHandler;
   versionCheck: UiRouteHandler;
   /** Prefix handler that dispatches /api/celiums-cognition/* by parsing the
    *  path. Use this single handler with registerHttpRoute({match:"prefix"}). */
@@ -1022,6 +1105,8 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
       req.method === "PUT"
         ? settingsTimezonePut(ctx, req, res)
         : settingsTimezoneGet(ctx, req, res),
+    previewPrompt: (req: IncomingMessage, res: ServerResponse) =>
+      previewPrompt(ctx, req, res),
     versionCheck: (req: IncomingMessage, res: ServerResponse) =>
       versionCheck(ctx, req, res),
   };
@@ -1091,6 +1176,7 @@ export function makeUiRouter(ctx: UiRouterContext): UiRoutes {
     if (p === "/activity/recent") return h.activityRecent(req, res);
     if (p === "/limbic-state") return h.limbicState(req, res);
     if (p === "/timezones") return h.timezones(req, res);
+    if (p === "/preview-prompt") return h.previewPrompt(req, res);
     sendError(res, 404, "NOT_FOUND", `no route for ${p}`);
   };
 
