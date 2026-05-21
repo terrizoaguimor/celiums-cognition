@@ -50,11 +50,25 @@ export default createCognitionPlugin({
       "postgresql://celiums:celiums@localhost:5432/celiums_memory";
     const qdrantUrl = process.env.CELIUMS_QDRANT_URL ?? "http://localhost:6333";
     const valkeyUrl = process.env.CELIUMS_VALKEY_URL ?? "redis://localhost:6379";
+    // BGE-large-en-v1.5 (TEI default) is 1024-dim. The celiums-memory
+    // engine defaults to 384 (sentence-transformers/all-MiniLM-L6-v2
+    // legacy from v2.0) — explicitly override here so the Qdrant
+    // collection and the `skills.embedding vector(1024)` schema stay
+    // aligned with what TEI produces. Without this, the collection gets
+    // created at 384 dims and every memory upsert errors out (silent
+    // try/catch swallows it, vectors_count stays null forever).
+    const embeddingDimensions = Number(process.env.CELIUMS_EMBEDDING_DIM ?? 1024);
+    const embeddingEndpoint = process.env.TEI_URL
+      ? `${process.env.TEI_URL.replace(/\/$/, "")}/embed`
+      : "http://localhost:8080/embed";
     return {
       databaseUrl,
       qdrantUrl,
       valkeyUrl,
       qdrantApiKey: process.env.CELIUMS_QDRANT_API_KEY,
+      embeddingDimensions,
+      embeddingEndpoint,
+      embeddingModel: process.env.CELIUMS_EMBEDDING_MODEL ?? "BAAI/bge-large-en-v1.5",
       personality: "celiums",
     } as never;
   },
