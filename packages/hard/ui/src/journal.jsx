@@ -5,7 +5,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { fetchJournal, fetchJournalAgents, fetchCounts, useQuery } from "./data.js";
 import { Ico } from "./celiums-primitives.jsx";
-import { PageHead, SectionCard, StatusDot, HelpPopover, fmtCount } from "./cc-shell.jsx";
+import { Drawer, PageHead, SectionCard, StatusDot, HelpPopover, fmtCount } from "./cc-shell.jsx";
 
 /* Journal tab — hash-chained first-person agent journal.
  * Each row carries prev_hash + hash; the chain can be re-verified by
@@ -20,6 +20,10 @@ export function Journal({ showToast }) {
 
   const agentsQ = useQuery(fetchJournalAgents, []);
   const allAgents = agentsQ.data?.agents ?? [];
+
+  // Selected entry for the detail drawer (Mario 2026-05-21: click should
+  // open the full entry, not just stare at a truncated preview).
+  const [selectedEntry, setSelectedEntry] = useState(null);
 
   // Auto-pick the most-recent agent if "all" returns too noisy a mix;
   // operator can switch back via the sidebar.
@@ -232,7 +236,11 @@ export function Journal({ showToast }) {
             </div>
           )}
 
-          {entries.map((e) => <JournalEntry key={e.id} e={e} showToast={showToast} />)}
+          {entries.map((e) => (
+            <JournalEntry key={e.id} e={e} showToast={showToast}
+              onClick={() => setSelectedEntry(e)}
+              selected={selectedEntry?.id === e.id} />
+          ))}
 
           {total > PAGE_SIZE && (
             <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: "14px 0 4px" }}>
@@ -251,23 +259,39 @@ export function Journal({ showToast }) {
           )}
         </div>
       </div>
+
+      <JournalEntryDrawer
+        entry={selectedEntry}
+        onClose={() => setSelectedEntry(null)}
+        showToast={showToast} />
     </>
   );
 }
 
-export function JournalEntry({ e, showToast }) {
+export function JournalEntry({ e, showToast, onClick, selected }) {
+  const preview = (e.content ?? "").length > 320
+    ? `${e.content.slice(0, 320)}…`
+    : e.content;
   return (
-    <div className="cc-journal-entry">
+    <div className="cc-journal-entry"
+         onClick={onClick}
+         style={{
+           cursor: onClick ? "pointer" : "default",
+           borderLeft: selected ? "3px solid var(--c-green)" : "3px solid transparent",
+           background: selected ? "var(--c-hover)" : undefined,
+           transition: "background 0.12s ease, border-color 0.12s ease",
+         }}>
       <div className="head">
         <span className="seq">{short(e.id, 8)}</span>
         <span className="ts">{fmtTimestamp(e.written_at)}</span>
         <span className="celiums-chip green">{e.entry_type}</span>
+        <span className="celiums-chip" style={{ fontFamily: "var(--font-mono)" }}>{e.agent_id}</span>
         {e.valence != null && (
           <span className="celiums-chip">v {Number(e.valence).toFixed(2)}</span>
         )}
         {(e.tags ?? []).slice(0, 4).map((t) => <span key={t} className="cc-tag">{t}</span>)}
       </div>
-      <div className="body">{e.content}</div>
+      <div className="body">{preview}</div>
       {e.valence_reason && (
         <div className="body" style={{ marginTop: 6, fontSize: 12.5, color: "var(--c-fg-muted)", fontStyle: "italic" }}>
           why: {e.valence_reason}
@@ -277,11 +301,129 @@ export function JournalEntry({ e, showToast }) {
         <span><span style={{ color: "var(--c-fg-faint)" }}>hash </span><code>{short(e.hash)}</code></span>
         <span><span style={{ color: "var(--c-fg-faint)" }}>prev </span><code>{short(e.prev_hash) || "·"}</code></span>
         <a className="celiums-link" style={{ fontSize: 11.5 }}
-          onClick={() => { navigator.clipboard?.writeText(e.content); showToast(`Entry ${short(e.id, 6)} copied`); }}>
+          onClick={(ev) => {
+            ev.stopPropagation();
+            navigator.clipboard?.writeText(e.content);
+            showToast(`Entry ${short(e.id, 6)} copied`);
+          }}>
           ⧉ copy
         </a>
+        {e.content && e.content.length > 320 && (
+          <a className="celiums-link" style={{ fontSize: 11.5, color: "var(--c-green-text)" }}
+             onClick={onClick}>
+            open ↗
+          </a>
+        )}
       </div>
     </div>
+  );
+}
+
+/* Drawer with the full entry + the entries it's preceded_by (causal
+ * chain hint). When clicked from the feed, the operator can scan the
+ * full body, copy parts, and verify the hash chain link to the previous
+ * entry without leaving the tab. */
+export function JournalEntryDrawer({ entry, onClose, showToast }) {
+  if (!entry) return <Drawer open={false} onClose={onClose} />;
+  const valence = Number(entry.valence ?? 0);
+  const importance = Number(entry.importance ?? 0);
+  return (
+    <Drawer open={true} onClose={onClose}>
+      <div className="cc-drawer-head">
+        <div style={{
+          width: 44, height: 44, borderRadius: 10,
+          background: "var(--c-surface-2)", border: "1px solid var(--c-divider)",
+          display: "grid", placeItems: "center", color: "var(--c-fg-muted)",
+          fontSize: 18, flexShrink: 0,
+        }}>≡</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2>{entry.entry_type} · {short(entry.id, 10)}…</h2>
+          <div className="slug" style={{ cursor: "pointer" }}
+            onClick={() => { navigator.clipboard?.writeText(entry.id); showToast("Entry id copied"); }}>
+            {entry.agent_id} · {fmtTimestamp(entry.written_at)}
+          </div>
+        </div>
+        <button className="cc-icon-btn" onClick={onClose}><Ico.x width={14} height={14} /></button>
+      </div>
+
+      <div className="cc-drawer-meta">
+        <span className="celiums-chip green">{entry.entry_type}</span>
+        <span className="celiums-chip" style={{ fontFamily: "var(--font-mono)" }}>{entry.agent_id}</span>
+        {entry.visibility && <span className="celiums-chip">{entry.visibility}</span>}
+        {entry.valence != null && (
+          <span className={`celiums-chip ${valence > 0.2 ? "green" : valence < -0.2 ? "amber" : ""}`}>
+            valence {valence.toFixed(2)}
+          </span>
+        )}
+        {entry.importance != null && (
+          <span className="celiums-chip">importance {(importance * 100).toFixed(0)}</span>
+        )}
+        {(entry.tags ?? []).map((t) => <span key={t} className="cc-tag">{t}</span>)}
+      </div>
+
+      <div className="cc-drawer-body">
+        <h3>Content</h3>
+        <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--c-fg)", whiteSpace: "pre-wrap" }}>
+          {entry.content}
+        </p>
+
+        {entry.valence_reason && (
+          <>
+            <h3>Why this valence</h3>
+            <p style={{ fontSize: 13, color: "var(--c-fg-muted)", lineHeight: 1.55, fontStyle: "italic" }}>
+              {entry.valence_reason}
+            </p>
+          </>
+        )}
+
+        <h3>Hash chain</h3>
+        <table className="celiums-table" style={{
+          border: "1px solid var(--c-border)", borderRadius: 8, overflow: "hidden",
+        }}>
+          <tbody>
+            {[
+              ["hash", entry.hash],
+              ["prev_hash", entry.prev_hash ?? "(genesis)"],
+              ["session_id", entry.session_id ?? "—"],
+              ["conversation_id", entry.conversation_id ?? "—"],
+              ["agent_id", entry.agent_id],
+            ].map(([k, v]) => (
+              <tr key={k}>
+                <td style={{ width: 140, color: "var(--c-fg-muted)", fontFamily: "var(--font-mono)", fontSize: 12 }}>{k}</td>
+                <td style={{ fontFamily: "var(--font-mono)", fontSize: 12, wordBreak: "break-all" }}>{String(v)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {Array.isArray(entry.preceded_by) && entry.preceded_by.length > 0 && (
+          <>
+            <h3>Preceded by</h3>
+            <ul style={{ paddingLeft: 18, color: "var(--c-fg-muted)", fontSize: 12.5, fontFamily: "var(--font-mono)" }}>
+              {entry.preceded_by.map((id) => (
+                <li key={id} style={{ marginBottom: 4 }}>{short(id, 20)}</li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+
+      <div className="cc-drawer-foot">
+        <button className="celiums-btn primary" onClick={() => {
+          navigator.clipboard?.writeText(entry.content);
+          showToast("Content copied");
+        }}>
+          <Ico.copy width={13} height={13} /> Copy content
+        </button>
+        <button className="celiums-btn" onClick={() => {
+          navigator.clipboard?.writeText(JSON.stringify(entry, null, 2));
+          showToast("Entry JSON copied");
+        }}>
+          <Ico.copy width={13} height={13} /> Copy JSON
+        </button>
+        <button className="celiums-btn ghost" style={{ marginLeft: "auto" }} onClick={onClose}>Close</button>
+      </div>
+    </Drawer>
   );
 }
 

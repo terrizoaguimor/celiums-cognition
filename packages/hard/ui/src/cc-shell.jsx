@@ -332,20 +332,31 @@ export function HelpPopover({ title, children }) {
       {open && (
         <div role="dialog" style={{
           position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 40,
-          width: 360, maxWidth: "calc(100vw - 32px)",
+          width: 380, maxWidth: "calc(100vw - 32px)",
+          maxHeight: "min(70vh, 520px)",
+          display: "flex", flexDirection: "column",
           background: "var(--c-surface)",
           border: "1px solid var(--c-border)",
           borderRadius: 8,
           boxShadow: "0 12px 28px rgba(0,0,0,0.15)",
-          padding: 14,
           fontSize: 12.5, lineHeight: 1.55, color: "var(--c-fg)",
+          overflow: "hidden",
         }}>
           <div style={{
-            fontWeight: 500, color: "var(--c-fg)", marginBottom: 8,
-            paddingBottom: 8, borderBottom: "1px solid var(--c-divider)",
+            fontWeight: 500, color: "var(--c-fg)",
+            padding: "12px 14px",
+            borderBottom: "1px solid var(--c-divider)",
             fontSize: 13,
+            background: "var(--c-surface)",
+            flex: "0 0 auto",
           }}>{title}</div>
-          {children}
+          <div style={{
+            padding: "12px 14px",
+            overflowY: "auto",
+            flex: "1 1 auto",
+          }}>
+            {children}
+          </div>
         </div>
       )}
     </span>
