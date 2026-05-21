@@ -1,5 +1,9 @@
 # Celiums Cognition
 
+[![npm](https://img.shields.io/npm/v/@celiumsai/cognition.svg?label=%40celiumsai%2Fcognition&color=00d26a)](https://www.npmjs.com/package/@celiumsai/cognition)
+[![npm downloads](https://img.shields.io/npm/dm/@celiumsai/cognition.svg?color=00d26a)](https://www.npmjs.com/package/@celiumsai/cognition)
+[![license](https://img.shields.io/npm/l/@celiumsai/cognition.svg?color=00d26a)](https://github.com/terrizoaguimor/celiums-cognition/blob/main/LICENSE)
+
 > Persistent emotional memory for OpenClaw agents. SHA-chained journal,
 > multi-layer ethics gate, PAD + circadian limbic engine, hybrid memory
 > retrieval, and ~60 cognitive tools — all wired into the agent's
