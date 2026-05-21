@@ -4,9 +4,9 @@
  */
 
 // @celiumsai/cognition (Hard) — OpenClaw plugin entry, storage = pg-triple
-// (Postgres 17 + pgvector, Qdrant, Valkey). The local stack is provisioned
-// AUTOMATICALLY by the shared adapter's service.start fallback (CLAUDE.md
-// §3b directive: zero manual setup). Manual entry point still available
+// (Postgres 17 + pgvector, Qdrant, Valkey, OpenSearch). The local stack is
+// provisioned AUTOMATICALLY by the shared adapter's service.start fallback
+// — operators do not run any setup step. Manual entry point still available
 // via the `bin: celiums-cognition` (src/setup.ts).
 
 import { fileURLToPath } from "node:url";

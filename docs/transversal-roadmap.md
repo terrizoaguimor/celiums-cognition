@@ -1,10 +1,11 @@
 # Transversal roadmap — Celiums Cognition × OpenClaw SDK
 
 > **Status (2026-05-21): ALL SIX PHASES SHIPPED + VERIFIED IN
-> PRODUCTION.** A→F closed between 2026-05-20 and 2026-05-21. See
-> `CLAUDE.md §5.1` for the commit map. This document is preserved as
-> the design rationale behind each Phase; the active project
-> authority is now `docs/celiums-cognition-doctrine.md`.
+> PRODUCTION.** A→F closed between 2026-05-20 and 2026-05-21. The
+> commit map is preserved in the project's git history. This
+> document is preserved as the design rationale behind each Phase;
+> the active project authority is now
+> `docs/celiums-cognition-doctrine.md`.
 
 **Theme (original):** The plugin used to live on its own island
 (tools + UI + auth). The OpenClaw SDK exposes ~50 seams that let
@@ -285,8 +286,10 @@ agent invocations.
 - `registerContextEngine` — exclusive slot; memory-core likely owns
   it. Fighting for it doesn't beat `registerCompactionProvider`
   which is not exclusive.
-- `registerTrustedToolPolicy` — bundled-only (CLAUDE.md §2b
-  confirmed). External plugins cannot register it.
+- `registerTrustedToolPolicy` — bundled-only (verified against the
+  OpenClaw plugin types: `registerTrustedToolPolicy` and
+  `registerCodexAppServerExtensionFactory` are gated on the bundled-
+  plugin trust path). External ClawHub plugins cannot register it.
 - `registerCodexAppServerExtensionFactory` — bundled-only.
 - `registerAgentHarness` — we're memory, not a harness.
 - `registerMigrationProvider` — only applies to systems with custom

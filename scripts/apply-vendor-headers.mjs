@@ -1,6 +1,7 @@
-// Prepend the HANDOFF §2.3 provenance header to every vendored engine/.ts and
-// memory-types/.ts. Idempotent: skips files that already carry the marker.
-// Preserves the file's existing `// SPDX-License-Identifier: Apache-2.0` lines.
+// Prepend the Apache-2.0 + celiums-memory provenance header to every
+// vendored engine/.ts and memory-types/.ts file. Idempotent: skips
+// files that already carry the marker. Preserves the file's existing
+// `// SPDX-License-Identifier: Apache-2.0` lines.
 import { readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

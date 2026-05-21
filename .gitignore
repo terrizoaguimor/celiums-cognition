@@ -17,7 +17,7 @@ coverage/
 # local data written by the gateway during dev
 .openclaw/
 
-# env / secrets — NEVER track (HANDOFF §6.6)
+# env / secrets — NEVER track
 .env
 .env.*
 !.env.example

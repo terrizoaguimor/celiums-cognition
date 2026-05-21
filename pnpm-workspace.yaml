@@ -7,7 +7,7 @@
 # `openclaw` is declared by hard ONLY as an optional peerDependency (the
 # host provides it at runtime via ClawHub). autoInstallPeers:false keeps it —
 # and its heavy native deps (sharp/koffi/…) — out of this dev tree. The SDK
-# type dependency is wired explicitly in Phase 3 (see CLAUDE.md deviation log).
+# type dependency is wired in via `packages/shared/src/api.ts`.
 autoInstallPeers: false
 packages:
   - "packages/memory-types"

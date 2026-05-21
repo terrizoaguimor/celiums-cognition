@@ -4,14 +4,15 @@
  */
 
 // Tool curator — `exposedTools: "curated"` (default) shows a small essential
-// surface; `"all"` shows every engine tool (HANDOFF §3.4).
+// surface; `"all"` shows every engine tool.
 //
-// NOTE: §3.4 listed `pad_state`/`circadian_now` as curated tools — verified
-// against the real engine they are NOT MCP tools (PAD/circadian are internal
-// engine state, surfaced via auto-recall context, not callable tools). The
-// curated allowlist below uses only REAL engine tool names (verified from
-// buildRegistry()): opencore `recall/remember/forage/sense`, `journal_write/
-// journal_recall`, `ethics_trace`. Unknown names are skipped defensively.
+// NOTE: an early design draft listed `pad_state`/`circadian_now` as curated
+// tools, but verified against the real engine they are NOT MCP tools
+// (PAD/circadian are internal engine state, surfaced via auto-recall context,
+// not callable tools). The curated allowlist below uses only REAL engine
+// tool names (verified from buildRegistry()): opencore `recall/remember/
+// forage/sense`, `journal_write/journal_recall`, `ethics_trace`,
+// `map_network`. Unknown names are skipped defensively.
 
 export interface EngineToolLike {
   group: string;
@@ -19,7 +20,7 @@ export interface EngineToolLike {
   handler: (args: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
 }
 
-/** Essential 8-ish surface — real engine tool names only (HANDOFF §3.4 intent). */
+/** Essential 8-ish surface — real engine tool names only. */
 export const CURATED_TOOL_NAMES: readonly string[] = [
   "recall",
   "remember",
