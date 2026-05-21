@@ -30,3 +30,9 @@ pnpm-debug.log*
 
 # local-only backups (git bundles, dumps) — never tracked
 backups/
+
+# Agent control plane — operator-specific notes (paths, identities,
+# session pipelines). Kept on disk per-machine, never tracked.
+CLAUDE.md
+AGENTS.md
+.agents/
