@@ -5,7 +5,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { fetchJournal, fetchJournalAgents, fetchJournalLineage, fetchCounts, useQuery } from "./data.js";
 import { Ico } from "./celiums-primitives.jsx";
-import { Drawer, PageHead, SectionCard, StatusDot, HelpPopover, fmtCount } from "./cc-shell.jsx";
+import { Drawer, PageHead, SectionCard, StatusDot, HelpPopover, Paginator, fmtCount } from "./cc-shell.jsx";
 
 /* Journal tab — hash-chained first-person agent journal.
  * Each row carries prev_hash + hash; the chain can be re-verified by
@@ -258,21 +258,14 @@ export function Journal({ showToast }) {
               selected={selectedEntry?.id === e.id} />
           ))}
 
-          {total > PAGE_SIZE && (
-            <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: "14px 0 4px" }}>
-              <button className="celiums-btn" disabled={offset === 0 || journalQ.loading}
-                      onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
-                ← prev
-              </button>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--c-fg-subtle)", alignSelf: "center" }}>
-                {offset + 1}–{offset + allEntries.length}
-              </span>
-              <button className="celiums-btn" disabled={offset + allEntries.length >= total || journalQ.loading}
-                      onClick={() => setOffset(offset + PAGE_SIZE)}>
-                next →
-              </button>
-            </div>
-          )}
+          <Paginator
+            offset={offset}
+            pageSize={PAGE_SIZE}
+            count={allEntries.length}
+            total={total}
+            loading={journalQ.loading}
+            onChange={setOffset}
+          />
         </div>
       </div>
 

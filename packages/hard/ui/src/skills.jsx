@@ -8,7 +8,7 @@ import {
   pillarMeta, useQuery,
 } from "./data.js";
 import { Ico } from "./celiums-primitives.jsx";
-import { Drawer, MarkdownView, PageHead, fmtCount } from "./cc-shell.jsx";
+import { Drawer, MarkdownView, PageHead, Paginator, fmtCount } from "./cc-shell.jsx";
 
 /* Skills tab — corpus browse + hybrid (FTS + vector) search. */
 
@@ -243,19 +243,14 @@ export function Skills({ showToast }) {
                           semantic={semantic && !!debouncedQ.trim()}
                           onClick={() => setSelectedName(s.name)} />
               ))}
-              <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: "14px 0 4px" }}>
-                <button className="celiums-btn" disabled={offset === 0 || skillsQ.loading}
-                        onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
-                  ← prev
-                </button>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--c-fg-subtle)", alignSelf: "center" }}>
-                  {offset + 1}–{offset + sortedSkills.length}
-                </span>
-                <button className="celiums-btn" disabled={offset + sortedSkills.length >= total || skillsQ.loading}
-                        onClick={() => setOffset(offset + PAGE_SIZE)}>
-                  next →
-                </button>
-              </div>
+              <Paginator
+                offset={offset}
+                pageSize={PAGE_SIZE}
+                count={sortedSkills.length}
+                total={total}
+                loading={skillsQ.loading}
+                onChange={setOffset}
+              />
             </>
           )}
         </div>

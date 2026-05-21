@@ -5,7 +5,7 @@
 import React, { useState } from "react";
 import { fetchEthicsEvents, useQuery, ETHICS_PIPELINE } from "./data.js";
 import { Ico } from "./celiums-primitives.jsx";
-import { Drawer, PageHead, SectionCard, HelpPopover, fmtCount, fmtRelative } from "./cc-shell.jsx";
+import { Drawer, PageHead, SectionCard, HelpPopover, Paginator, fmtCount, fmtRelative } from "./cc-shell.jsx";
 
 /* Ethics tab — audit trail of every pipeline decision.
  *
@@ -132,21 +132,14 @@ export function Ethics({ showToast }) {
 
       {events.map((e) => <EthicsRow key={e.id} e={e} onClick={() => setSelected(e)} />)}
 
-      {total > PAGE_SIZE && (
-        <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: "14px 0 4px" }}>
-          <button className="celiums-btn" disabled={offset === 0 || ethicsQ.loading}
-                  onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
-            ← prev
-          </button>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--c-fg-subtle)", alignSelf: "center" }}>
-            {offset + 1}–{offset + events.length}
-          </span>
-          <button className="celiums-btn" disabled={offset + events.length >= total || ethicsQ.loading}
-                  onClick={() => setOffset(offset + PAGE_SIZE)}>
-            next →
-          </button>
-        </div>
-      )}
+      <Paginator
+        offset={offset}
+        pageSize={PAGE_SIZE}
+        count={events.length}
+        total={total}
+        loading={ethicsQ.loading}
+        onChange={setOffset}
+      />
 
       <EthicsDrawer e={selected} onClose={() => setSelected(null)} showToast={showToast} />
     </>

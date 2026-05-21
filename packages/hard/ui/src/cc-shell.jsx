@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect, Fragment } from 'react';
+import { createPortal } from 'react-dom';
 import { Avatar, CeliumsWordmark, Ico } from './celiums-primitives.jsx';
 /* Celiums Cognition — plugin shell + primitives in the Celiums design language. */
 
@@ -603,22 +604,95 @@ export function MarkdownView({ text }) {
 
 
 /* ─────────────────────── Drawer ─────────────────────── */
+//
+// Portaled to document.body so the drawer escapes the route's
+// containing block. usePageTransition (motion.js) applies GSAP
+// transforms to routeRef, which leaves a residual `transform` on the
+// element even after the animation lands at translate(0,0). CSS spec:
+// any non-`none` transform creates a new containing block for
+// fixed-position descendants — so a `position: fixed; top: 0` drawer
+// rendered inside the transformed route binds to the route's top
+// instead of the viewport's. When the operator scrolled mid-list and
+// clicked a row, the drawer opened off-screen above the visible area
+// (Mario, 2026-05-21). Rendering through createPortal sidesteps the
+// containing block: the drawer mounts as a direct child of body, and
+// `position: fixed; top: 0` resolves against the viewport again.
+//
+// Body scroll lock while open: a small UX nicety. Without it the
+// main-scroll wheel keeps moving the page behind the scrim, which
+// reads as a layout glitch on the next viewport repaint.
 export function Drawer({ open, onClose, children }) {
   useEffect(() => {
     if (!open) return;
-    const onKey = e => { if (e.key === "Escape") onClose(); };
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
-  return (
+
+  useEffect(() => {
+    if (!open || typeof document === "undefined") return;
+    const main = document.querySelector("main");
+    const prev = main?.style.overflow;
+    if (main) main.style.overflow = "hidden";
+    return () => { if (main) main.style.overflow = prev ?? ""; };
+  }, [open]);
+
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <>
       <div className={`cc-scrim ${open ? "open" : ""}`} onClick={onClose} />
       <aside className={`cc-drawer ${open ? "open" : ""}`}>{open && children}</aside>
-    </>
+    </>,
+    document.body,
+  );
+}
+
+/* ─────────────────────── Paginator ───────────────────────
+ * Shared prev/next + page-count UI used by Memories, Skills,
+ * Journal, and Ethics. Centralizes two behaviours the inlined
+ * versions used to drift on:
+ *   - the scroll container is the app's `<main>`, not the window —
+ *     so changing the page must scroll <main> back to the top, not
+ *     window. Without this, the operator's viewport stays anchored
+ *     at the bottom of the previous page and the first rows of the
+ *     new page are invisible until they scroll up manually.
+ *   - disabled state on prev / next derived consistently from
+ *     offset, count, total, and loading.
+ *
+ * Returns null when the list fits on a single page so list views
+ * that have only a few rows don't render an empty footer.
+ */
+export function Paginator({ offset, pageSize, count, total, loading, onChange }) {
+  if (typeof total === "number" && total <= pageSize) return null;
+  const goTo = (next) => {
+    onChange(next);
+    // setTimeout to let React flush state + the new page's first
+    // render before we move the scroll. Without the defer, smooth
+    // scroll fights the row mount and feels jittery on slower hosts.
+    if (typeof document !== "undefined") {
+      setTimeout(() => {
+        document.querySelector("main")?.scrollTo({ top: 0, behavior: "smooth" });
+      }, 0);
+    }
+  };
+  return (
+    <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: "14px 0 4px" }}>
+      <button className="celiums-btn" disabled={offset === 0 || loading}
+              onClick={() => goTo(Math.max(0, offset - pageSize))}>
+        ← prev
+      </button>
+      <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--c-fg-subtle)", alignSelf: "center" }}>
+        {offset + 1}–{offset + count}
+      </span>
+      <button className="celiums-btn" disabled={offset + count >= total || loading}
+              onClick={() => goTo(offset + pageSize)}>
+        next →
+      </button>
+    </div>
   );
 }
 
 Object.assign(window, {
   CCConsoleShell, PageHead, SectionCard, StatusDot, Sparkline, Toast,
-  fmtCount, fmtBytes, fmtRelative, MarkdownView, Drawer, CC_ROUTES,
+  fmtCount, fmtBytes, fmtRelative, MarkdownView, Drawer, Paginator, CC_ROUTES,
 });

@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from "react";
 import { fetchMemories, useQuery } from "./data.js";
 import { Ico } from "./celiums-primitives.jsx";
-import { Drawer, PageHead, HelpPopover, fmtCount, fmtRelative } from "./cc-shell.jsx";
+import { Drawer, PageHead, HelpPopover, Paginator, fmtCount, fmtRelative } from "./cc-shell.jsx";
 
 /* Memories tab — VAD-tagged persistent memories from the cognitive store.
  *
@@ -155,21 +155,14 @@ export function Memories({ showToast }) {
           onClick={() => setSelected(m)} />
       ))}
 
-      {total > PAGE_SIZE && (
-        <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: "14px 0 4px" }}>
-          <button className="celiums-btn" disabled={offset === 0 || memoriesQ.loading}
-                  onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
-            ← prev
-          </button>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--c-fg-subtle)", alignSelf: "center" }}>
-            {offset + 1}–{offset + all.length}
-          </span>
-          <button className="celiums-btn" disabled={offset + all.length >= total || memoriesQ.loading}
-                  onClick={() => setOffset(offset + PAGE_SIZE)}>
-            next →
-          </button>
-        </div>
-      )}
+      <Paginator
+        offset={offset}
+        pageSize={PAGE_SIZE}
+        count={all.length}
+        total={total}
+        loading={memoriesQ.loading}
+        onChange={setOffset}
+      />
 
       <MemoryDrawer m={selected} onClose={() => setSelected(null)} showToast={showToast} />
     </>
