@@ -166,8 +166,16 @@ export function wireService(ctx: PluginContext): void {
       try {
         await edition.bootstrap(engineCfg, api);
         api.logger.info(`${edition.id}: ready (bootstrap completed)`);
-        await runMigrations(edition, ec, api);
-        await runSeed(edition, ec, api);
+        // First-install ordering: bootstrap may have minted a fresh
+        // credentials.env that databaseUrlFromCredentialsFile() will
+        // now resolve to a real password. Re-resolve before running
+        // migrations + seed so they pick up the freshly-minted creds
+        // instead of the stale legacy fallback computed at register-
+        // time.
+        const ecPostBootstrap = edition.resolveEngineConfig(cfg, api) as
+          { databaseUrl?: string; qdrantUrl?: string; valkeyUrl?: string };
+        await runMigrations(edition, ecPostBootstrap, api);
+        await runSeed(edition, ecPostBootstrap, api);
         setReady(true);
         api.logger.info(`${edition.id}: readiness gate open — db-writing hooks now active`);
       } catch (err) {
