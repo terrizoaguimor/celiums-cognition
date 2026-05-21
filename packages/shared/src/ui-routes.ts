@@ -20,165 +20,36 @@
 // surface for handler authors.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import * as net from "node:net";
-import { Pool } from "pg";
 import { makeAuthRouter, type AuthRouter } from "./auth-routes.js";
 import {
   buildMemoryPromptSupplement,
   buildAgentIdentityPreamble,
 } from "./prompt-supplement/index.js";
 import { CURATED_TOOL_NAMES } from "./tool-curator/index.js";
+import {
+  sendJson,
+  sendError,
+  parseQuery,
+  urlTooLarge,
+  sanitizeDbError,
+  probeListener,
+  paginate,
+  type UiRouterContext,
+  type UiRouteHandler,
+} from "./routes/utils.js";
+import {
+  journalRecent,
+  journalAgents,
+  journalLineage,
+} from "./routes/journal.js";
+import {
+  inboxInject,
+  operatorStatus,
+} from "./routes/operator.js";
 
-// ─── small helpers ─────────────────────────────────────────────────────
-
-function sendJson(
-  res: ServerResponse,
-  status: number,
-  body: unknown,
-): void {
-  const payload = JSON.stringify(body);
-  res.statusCode = status;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
-  res.end(payload);
-}
-
-function sendError(
-  res: ServerResponse,
-  status: number,
-  code: string,
-  message: string,
-): void {
-  sendJson(res, status, { error: { code, message } });
-}
-
-function parseQuery(req: IncomingMessage): URLSearchParams {
-  // OpenClaw routes the request to the plugin without rewriting URL, so we
-  // can use req.url; gateway origin doesn't matter for query parsing.
-  const host = req.headers.host || "localhost";
-  const url = new URL(req.url || "/", `http://${host}`);
-  return url.searchParams;
-}
-
-/** Per-request guard: reject requests with absurdly long URLs.
- *  Defense-in-depth against DoS via pathological query strings
- *  (regex backtracking inside trigram/FTS, accidental log inflation,
- *  memory pressure parsing). Tuned generously: 8 KB covers any
- *  legitimate filter combo we expose. */
-const MAX_URL_BYTES = 8 * 1024;
-
-function urlTooLarge(req: IncomingMessage): boolean {
-  return (req.url ?? "").length > MAX_URL_BYTES;
-}
-
-/** Map PG / engine error strings to a stable, non-leaky surface.
- *  We were echoing `String(err)` directly, which on duplicate-key /
- *  constraint violations exposes column/index names (e.g.,
- *  "duplicate key value violates unique constraint accounts_email_key").
- *  That's an information-disclosure surface for an attacker probing the
- *  schema. Map known kinds, otherwise return a generic message. */
-function sanitizeDbError(err: unknown): string {
-  if (err instanceof Error) {
-    const s = err.message;
-    if (/duplicate key/i.test(s)) return "duplicate value";
-    if (/violates foreign key/i.test(s)) return "referenced row missing";
-    if (/null value in column/i.test(s)) return "required field missing";
-    if (/violates check constraint/i.test(s)) return "constraint violation";
-    if (/permission denied/i.test(s)) return "operation denied";
-    if (/relation .* does not exist/i.test(s)) return "internal: schema mismatch";
-    // For everything else: a generic message + a stable error class so
-    // operators can correlate logs without exposing details on the wire.
-    return "internal db error";
-  }
-  return "internal error";
-}
-
-/** Probe a TCP listener with a short timeout (used by /health). */
-function probeListener(
-  host: string,
-  port: number,
-  timeoutMs = 800,
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    const sock = net.connect({ host, port });
-    const t = setTimeout(() => {
-      sock.destroy();
-      resolve(false);
-    }, timeoutMs);
-    sock.once("connect", () => {
-      clearTimeout(t);
-      sock.destroy();
-      resolve(true);
-    });
-    sock.once("error", () => {
-      clearTimeout(t);
-      resolve(false);
-    });
-  });
-}
-
-// ─── runtime context ───────────────────────────────────────────────────
-// The adapter calls makeUiRouter(...) with these once; the returned
-// `handlers` object exposes a function per endpoint that the adapter
-// wires into registerHttpRoute. No globals — everything lives behind
-// these closures.
-
-export interface UiRouterContext {
-  pool: Pool;
-  /** Engine reference for getLimbicState / getCircadianTelemetry. The
-   *  adapter wires this from the lazy engine init; null means engine
-   *  isn't ready yet (very early in startup) and the endpoints will
-   *  degrade with 503. */
-  engine?: {
-    getLimbicState?: (userId: string) => Promise<unknown>;
-    getCircadianTelemetry?: (userId: string) => Promise<unknown>;
-  };
-  /** User id used by the single-account plugin to scope memories /
-   *  limbic state. Matches cfg.userId (default "default"). */
-  userId: string;
-  /** Engine config the adapter resolved (for endpoint metadata). */
-  engineConfig: {
-    databaseUrl?: string;
-    qdrantUrl?: string;
-    valkeyUrl?: string;
-  };
-  /** TEI base URL — same env CELIUMS_LLM uses for embed calls (see
-   *  README). When absent, /semantic search degrades to text-only. */
-  teiUrl?: string;
-  /** Plugin metadata for /health. */
-  plugin: {
-    id: string;
-    version: string;
-    edition: "hard" | "lite";
-  };
-  /** Seed metadata if a seed has been applied (filled by SeedManager
-   *  on success). Optional. */
-  seedState?: {
-    version: string;
-    appliedAt: string;
-  };
-  installedAt?: string;
-  /** Agent id this plugin runs under — passed through to /operator-status
-   *  so the journal-head lookup scopes correctly. Defaults to the
-   *  plugin's cfg.agentId. */
-  agentId?: string;
-  /** Active ethics mode (radar | enforce | silent | off). Surface for
-   *  /operator-status so the cognition widget chip shows the right
-   *  state. Falls back to "radar" when unset. */
-  ethicsMode?: string;
-  /** Captured `api.enqueueNextTurnInjection` reference. Used by the
-   *  /inbox/inject mailbox endpoint (Fase F). Null when the host
-   *  gateway does not expose the seam — the endpoint returns 503. */
-  inboxEnqueue?: ((injection: {
-    sessionKey: string;
-    text: string;
-    idempotencyKey?: string;
-    placement?: "prepend_context" | "append_context";
-    ttlMs?: number;
-    metadata?: Record<string, unknown>;
-  }) => Promise<{ enqueued: boolean; id: string; sessionKey: string }>) | null;
-  logger?: { info?: (m: string) => void; warn?: (m: string) => void };
-}
+// Re-export the context + handler types so plugin-adapter's import of
+// `./ui-routes.js` still resolves them without touching the call site.
+export type { UiRouterContext, UiRouteHandler };
 
 // ─── endpoint implementations ──────────────────────────────────────────
 
@@ -532,18 +403,6 @@ async function skillDetail(
 
 // ─── memory / journal / ethics handlers ────────────────────────────────
 
-/** Read pagination params with safe caps. */
-function paginate(req: IncomingMessage): { limit: number; offset: number } {
-  const q = parseQuery(req);
-  let limit = parseInt(q.get("limit") ?? "20", 10);
-  let offset = parseInt(q.get("offset") ?? "0", 10);
-  if (!Number.isFinite(limit) || limit <= 0) limit = 20;
-  if (!Number.isFinite(offset) || offset < 0) offset = 0;
-  limit = Math.min(limit, 200);
-  offset = Math.min(offset, 1_000_000);
-  return { limit, offset };
-}
-
 /** GET /api/celiums-cognition/memories
  *  List recent memories, paginated. Optional ?q= filters by content ILIKE.
  *  Single-account → no user_id filter (everything belongs to the operator). */
@@ -642,327 +501,6 @@ async function memoriesList(
   }
 }
 
-/** GET /api/celiums-cognition/journal/recent
- *  Most recent journal entries with the SHA-chained hash for verification. */
-async function journalRecent(
-  ctx: UiRouterContext,
-  req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> {
-  // Per-agent scoping (Mario 2026-05-21): each agent — main, subagents,
-  // external models — keeps its own SHA-chained journal. ?agent_id=X
-  // narrows to that voice; omitting it returns the union for the
-  // overview view. Entry-type filter remains compatible with the older
-  // single-stream UI.
-  const { limit, offset } = paginate(req);
-  const agentId = parseQuery(req).get("agent_id")?.trim() ?? "";
-  const entryType = parseQuery(req).get("entry_type")?.trim() ?? "";
-  const args: unknown[] = [];
-  const where: string[] = [];
-  if (agentId) {
-    args.push(agentId);
-    where.push(`agent_id = $${args.length}`);
-  }
-  if (entryType && entryType !== "all") {
-    args.push(entryType);
-    where.push(`entry_type = $${args.length}`);
-  }
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  try {
-    const countArgs = [...args];
-    args.push(limit, offset);
-    const { rows } = await ctx.pool.query(
-      `SELECT id, agent_id, session_id, entry_type, content, importance,
-              written_at, prev_hash, hash, conversation_id, valence,
-              valence_reason, visibility, tags, preceded_by
-         FROM agent_journal
-         ${whereSql}
-        ORDER BY written_at DESC
-        LIMIT $${args.length - 1} OFFSET $${args.length}`,
-      args,
-    );
-    const { rows: countRows } = await ctx.pool.query(
-      `SELECT count(*)::int AS n FROM agent_journal ${whereSql}`,
-      countArgs,
-    );
-    sendJson(res, 200, {
-      entries: rows,
-      total: countRows[0]?.n ?? 0,
-      limit,
-      offset,
-      agent_id: agentId || null,
-    });
-  } catch (err) {
-    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
-  }
-}
-
-/** GET /api/celiums-cognition/journal/agents
- *  List every agent_id that has at least one journal entry, with row
- *  counts + last-written timestamp + a per-entry-type breakdown. The
- *  Journal tab uses this to render a left sidebar of voices the
- *  operator can switch between. */
-async function journalAgents(
-  ctx: UiRouterContext,
-  _req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> {
-  try {
-    // Two CTEs: per-agent aggregates + per-(agent,type) counts → join.
-    // Avoids the window-function-inside-GROUP-BY trap the previous
-    // single-statement version hit (PG 17 syntax error at OVER).
-    const { rows } = await ctx.pool.query(
-      `WITH per_agent AS (
-         SELECT agent_id,
-                count(*)::int AS total,
-                max(written_at) AS last_written_at,
-                min(written_at) AS first_written_at,
-                avg(valence)::float AS avg_valence
-           FROM agent_journal
-          GROUP BY agent_id
-       ),
-       per_type AS (
-         SELECT agent_id,
-                jsonb_object_agg(entry_type, n) AS breakdown
-           FROM (
-             SELECT agent_id, entry_type, count(*)::int AS n
-               FROM agent_journal
-              GROUP BY agent_id, entry_type
-           ) x
-          GROUP BY agent_id
-       )
-       SELECT a.agent_id, a.total, a.last_written_at, a.first_written_at,
-              a.avg_valence, COALESCE(t.breakdown, '{}'::jsonb) AS breakdown
-         FROM per_agent a
-         LEFT JOIN per_type t USING (agent_id)
-        ORDER BY a.last_written_at DESC`,
-    );
-    sendJson(res, 200, { agents: rows });
-  } catch (err) {
-    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
-  }
-}
-
-/** GET /api/celiums-cognition/journal/lineage
- *  Parent ↔ subagent edges recorded by Fase B's three hooks
- *  (subagent_spawning / subagent_spawned / subagent_ended) into
- *  `agent_lineage`. With `?agent_id=X` returns the subgraph that
- *  contains X — both ancestry (who spawned X, transitively) and
- *  descendants (what X spawned, transitively) — capped at 10 rungs
- *  in either direction so a corrupted cycle cannot run away. Without
- *  the param, returns the most-recent 500 edges across the gateway.
- *
- *  Empty edge list with `schema: "missing"` is returned when migration
- *  014 has not yet been applied (older gateways), so the UI can degrade
- *  to "no lineage data" instead of surfacing a SQL error. */
-async function journalLineage(
-  ctx: UiRouterContext,
-  req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> {
-  const focus = parseQuery(req).get("agent_id")?.trim() ?? "";
-  try {
-    const exists = await ctx.pool.query(
-      `SELECT to_regclass('public.agent_lineage') AS r`,
-    );
-    if (!exists.rows[0]?.r) {
-      return sendJson(res, 200, {
-        edges: [],
-        focus: focus || null,
-        schema: "missing",
-      });
-    }
-    let rows;
-    if (focus) {
-      const r = await ctx.pool.query(
-        `WITH RECURSIVE
-           ancestors AS (
-             SELECT l.*, 0 AS rung
-               FROM agent_lineage l
-              WHERE l.child_agent_id = $1
-             UNION
-             SELECT l.*, a.rung + 1
-               FROM agent_lineage l
-               JOIN ancestors a ON l.child_agent_id = a.parent_agent_id
-              WHERE a.rung < 10
-           ),
-           descendants AS (
-             SELECT l.*, 0 AS rung
-               FROM agent_lineage l
-              WHERE l.parent_agent_id = $1
-             UNION
-             SELECT l.*, d.rung + 1
-               FROM agent_lineage l
-               JOIN descendants d ON l.parent_agent_id = d.child_agent_id
-              WHERE d.rung < 10
-           )
-         SELECT DISTINCT id, parent_agent_id, child_agent_id, child_session_key,
-                conversation_id, task_label, mode, depth, spawned_at, ended_at,
-                end_outcome, end_summary
-           FROM (
-             SELECT * FROM ancestors
-             UNION
-             SELECT * FROM descendants
-           ) all_edges
-          ORDER BY spawned_at DESC
-          LIMIT 500`,
-        [focus],
-      );
-      rows = r.rows;
-    } else {
-      const r = await ctx.pool.query(
-        `SELECT id, parent_agent_id, child_agent_id, child_session_key,
-                conversation_id, task_label, mode, depth, spawned_at, ended_at,
-                end_outcome, end_summary
-           FROM agent_lineage
-          ORDER BY spawned_at DESC
-          LIMIT 500`,
-      );
-      rows = r.rows;
-    }
-    sendJson(res, 200, {
-      edges: rows,
-      focus: focus || null,
-      schema: "ready",
-    });
-  } catch (err) {
-    sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
-  }
-}
-
-/** POST /api/celiums-cognition/inbox/inject
- *  Mailbox bridge for inbound channels (Fase F, doctrine G4). External
- *  plugins or services that own a channel adapter (Telegram, Slack,
- *  webhook, etc.) POST a JSON body here to enqueue a note that the
- *  target session sees at the top of its next turn.
- *
- *  Body: { sessionKey, text, idempotencyKey?, placement?, channel?, ttlMs? }
- *
- *  Returns 503 when the gateway lacks `api.enqueueNextTurnInjection`
- *  (older builds) so the caller can fall back gracefully. */
-async function inboxInject(
-  ctx: UiRouterContext,
-  req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> {
-  if (req.method !== "POST") {
-    return sendError(res, 405, "METHOD_NOT_ALLOWED", `${req.method} not allowed`);
-  }
-  if (!ctx.inboxEnqueue) {
-    return sendError(
-      res,
-      503,
-      "UNAVAILABLE",
-      "gateway does not expose enqueueNextTurnInjection on this build",
-    );
-  }
-  let body = "";
-  for await (const chunk of req) body += chunk;
-  // 64 KB cap on inbox bodies — channel notices should be short.
-  if (body.length > 64 * 1024) {
-    return sendError(res, 413, "PAYLOAD_TOO_LARGE", "body exceeds 64 KB");
-  }
-  let payload: {
-    sessionKey?: unknown;
-    text?: unknown;
-    idempotencyKey?: unknown;
-    placement?: unknown;
-    channel?: unknown;
-    ttlMs?: unknown;
-  };
-  try {
-    payload = JSON.parse(body || "{}");
-  } catch {
-    return sendError(res, 400, "INVALID_JSON", "request body is not valid JSON");
-  }
-  if (typeof payload.sessionKey !== "string" || !payload.sessionKey) {
-    return sendError(res, 400, "INVALID_PAYLOAD", "sessionKey (string) required");
-  }
-  if (typeof payload.text !== "string" || !payload.text) {
-    return sendError(res, 400, "INVALID_PAYLOAD", "text (string) required");
-  }
-  const placement =
-    payload.placement === "append_context" ? "append_context" : "prepend_context";
-  try {
-    const result = await ctx.inboxEnqueue({
-      sessionKey: payload.sessionKey,
-      text: payload.text,
-      ...(typeof payload.idempotencyKey === "string"
-        ? { idempotencyKey: payload.idempotencyKey }
-        : {}),
-      placement,
-      ...(typeof payload.ttlMs === "number" ? { ttlMs: payload.ttlMs } : {}),
-      metadata: {
-        source: "celiums-cognition.inbox",
-        ...(typeof payload.channel === "string" && payload.channel
-          ? { channel: payload.channel }
-          : {}),
-      },
-    });
-    sendJson(res, 200, {
-      ok: true,
-      enqueued: result.enqueued,
-      id: result.id,
-      session_key: result.sessionKey,
-    });
-  } catch (err) {
-    // Doctrine G1: reason is plugin-local; message must not leak
-    // gateway-internal detail to wire. Logger keeps the verbose trace
-    // for operator audit.
-    ctx.logger?.warn?.(
-      `inbox/inject enqueue failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
-    );
-    sendError(res, 500, "ENQUEUE_FAILED", "enqueue failed");
-  }
-}
-
-/** GET /api/celiums-cognition/operator-status
- *  Returns the four cognition metrics surfaced by Fase D's control UI
- *  descriptor: context usage %, journal head (id+hash+time), ethics
- *  mode, recall count for last turn. The same payload is returned by
- *  the `celiums.status` session action so the shell widget and the
- *  dashboard widget read identical values.
- *
- *  context_usage_pct and recall_count_last_turn are null when the host
- *  hasn't supplied the underlying signals (G2: a visible "—" beats a
- *  fabricated number). */
-async function operatorStatus(
-  ctx: UiRouterContext,
-  _req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> {
-  const agentId = ctx.agentId ?? "celiums-cognition";
-  const ethicsMode = ctx.ethicsMode ?? "radar";
-  let journal_head:
-    | { id: string; hash: string; written_at: string }
-    | null = null;
-  try {
-    const { rows } = await ctx.pool.query(
-      `SELECT id, hash, written_at
-         FROM agent_journal
-        WHERE agent_id = $1
-        ORDER BY written_at DESC
-        LIMIT 1`,
-      [agentId],
-    );
-    if (rows[0]) {
-      const w = rows[0].written_at;
-      journal_head = {
-        id: String(rows[0].id),
-        hash: String(rows[0].hash),
-        written_at: w instanceof Date ? w.toISOString() : String(w ?? ""),
-      };
-    }
-  } catch (err) {
-    return sendError(res, 500, "DB_ERROR", sanitizeDbError(err));
-  }
-  sendJson(res, 200, {
-    context_usage_pct: null,
-    journal_head,
-    ethics_mode: ethicsMode,
-    recall_count_last_turn: null,
-  });
-}
 
 /** GET /api/celiums-cognition/ethics/events
  *  Audit-log entries from the ethics pipeline. ?decision=block|flag|allow|all
@@ -1449,11 +987,6 @@ async function versionCheck(
 }
 
 // ─── router ─────────────────────────────────────────────────────────────
-
-export type UiRouteHandler = (
-  req: IncomingMessage,
-  res: ServerResponse,
-) => Promise<void> | void;
 
 export interface UiRoutes {
   health: UiRouteHandler;
