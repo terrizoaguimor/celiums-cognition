@@ -306,19 +306,23 @@ async function authMe(
 ): Promise<void> {
   const sess = await getCurrentSession(ctx, req);
   if (!sess) {
-    // 200 with explicit "no session" so the SPA can branch without
-    // treating 401 as an error in console.
+    // To an unauthenticated caller we expose ONLY whether signup is
+    // still possible (zero accounts in the DB) — never whether an
+    // account already exists. This is single-tenant on purpose
+    // (Mario 2026-05-21: "si ya está creado el usuario no debería de
+    // poderse crear más usuarios"), and leaking `account_exists`
+    // tells an attacker the system is in use and worth targeting.
     const acct = await getAccount(ctx);
     sendJson(res, 200, {
       authenticated: false,
-      account_exists: !!acct,
+      can_signup: !acct,
     });
     return;
   }
   sendJson(res, 200, {
     authenticated: sess.session.scope === "active",
     scope: sess.session.scope,
-    account_exists: true,
+    can_signup: false,
     user: {
       username: sess.account.username,
       email: sess.account.email,

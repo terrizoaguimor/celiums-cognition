@@ -42,12 +42,16 @@ export function App() {
       if (r.authenticated) {
         setUser(r.user);
         setAuthState("in");
-      } else if (r.account_exists) {
-        setUser(null);
-        setAuthState("login");
-      } else {
+      } else if (r.can_signup) {
+        // Fresh install — zero accounts in the DB. Onboarding is the
+        // ONLY way in; first signup claims the operator slot.
         setUser(null);
         setAuthState("onboard");
+      } else {
+        // Account already exists (server doesn't say so, but
+        // can_signup=false implies it). Login screen, no signup option.
+        setUser(null);
+        setAuthState("login");
       }
     } catch {
       // /auth/me failed (network/server). Show login screen as the safest
@@ -168,10 +172,11 @@ export function App() {
           mode={authState}
           theme={values.theme}
           onToggleTheme={() => setTweak("theme", values.theme === "dark" ? "light" : "dark")}
-          onComplete={(res) => {
-            // res may carry { existing, wantOnboard }; either way, re-check
-            // the server to derive the new state.
-            if (res?.wantOnboard) { setAuthState("onboard"); return; }
+          onComplete={() => {
+            // Always re-check the server to derive the new state.
+            // Note: there is no `wantOnboard` branch any more — single-
+            // account plugins never let the login screen offer a path
+            // back to onboarding (Mario 2026-05-21 security note).
             refreshAuth();
           }}
         />

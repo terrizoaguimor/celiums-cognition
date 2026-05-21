@@ -453,8 +453,13 @@ export function LogIn({ theme = "light", onToggleTheme, onComplete }) {
   return (
     <PreAuthShell theme={theme} width="100vw" height="100vh" onToggleTheme={onToggleTheme}>
       {{
-        _sideLink: <>New here? <a className="celiums-link" style={{ marginLeft: 4 }}
-                                    onClick={() => onComplete({ wantOnboard: true })}>Create account</a></>,
+        // Single-tenant plugin: the side-link offering "Create account"
+        // was removed (Mario 2026-05-21). Once the operator account
+        // exists, there is no UI affordance to create another one;
+        // /auth/me also stops reporting account_exists to anonymous
+        // callers, so the screen can't be reached by a stranger guessing
+        // a URL. Lost-credentials path is operator-only DB intervention.
+        _sideLink: null,
         main: (
           <div style={{ width: 400 }}>
             <div className="cc-stepper">
