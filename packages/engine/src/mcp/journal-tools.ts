@@ -860,6 +860,12 @@ const handleEstablishPredecessor: McpToolHandler = async (args, ctx) => {
   const heir = String(args.heir_agent_id ?? (args as any).heirAgentId ?? '').trim();
   const predecessor = String(args.predecessor_agent_id ?? (args as any).predecessorAgentId ?? '').trim();
   const reason = typeof args.reason === 'string' ? args.reason.slice(0, 500) : null;
+  // Audit fix v0.1.2: the v0.1.1 description promised "revoke=true keeps
+  // the audit trail intact" but the handler ignored the argument. Now
+  // honored: revoke=true marks the existing row revoked (revoked_at +
+  // revoked_by) WITHOUT deleting it, so journal_recall stops honoring
+  // the lineage but the audit log of past authorizations stays readable.
+  const revoke = args.revoke === true || args.revoke === 'true';
   const bad = (msg: string) => {
     const e = new Error(msg) as Error & { code?: number };
     e.code = -32602;
@@ -869,7 +875,34 @@ const handleEstablishPredecessor: McpToolHandler = async (args, ctx) => {
   if (!AGENT_ID_RE.test(predecessor)) throw bad(`predecessor_agent_id must match ${AGENT_ID_RE.source}`);
   if (heir === predecessor) throw bad('heir_agent_id and predecessor_agent_id must differ');
 
-  const establishedBy = getAgentId(ctx);
+  const callerAgent = getAgentId(ctx);
+
+  if (revoke) {
+    const r = await pool.query(
+      `UPDATE agent_lineage_predecessors
+          SET revoked_at = NOW(),
+              revoked_by = $4
+        WHERE user_id = $1
+          AND heir_agent_id = $2
+          AND predecessor_agent_id = $3
+          AND revoked_at IS NULL
+        RETURNING user_id, heir_agent_id, predecessor_agent_id, revoked_at, revoked_by`,
+      [ctx.userId, heir, predecessor, callerAgent],
+    );
+    if (r.rowCount === 0) {
+      throw bad(`no active lineage edge from "${heir}" to "${predecessor}" to revoke`);
+    }
+    void writeAuditEvent(ctx, {
+      event_kind: 'journal.establish_predecessor.revoke',
+      user_id: ctx.userId,
+      agent_id: callerAgent,
+      decision: 'allow',
+      reason: reason ?? 'predecessor lineage revoked',
+      details: { heir, predecessor },
+    });
+    return ok(asText({ ok: true, revoked: r.rows[0] }));
+  }
+
   try {
     const r = await pool.query(
       `INSERT INTO agent_lineage_predecessors
@@ -882,12 +915,12 @@ const handleEstablishPredecessor: McpToolHandler = async (args, ctx) => {
                        established_by = EXCLUDED.established_by,
                        reason = COALESCE(EXCLUDED.reason, agent_lineage_predecessors.reason)
        RETURNING user_id, heir_agent_id, predecessor_agent_id, established_at, established_by, reason`,
-      [ctx.userId, heir, predecessor, establishedBy, reason],
+      [ctx.userId, heir, predecessor, callerAgent, reason],
     );
     void writeAuditEvent(ctx, {
       event_kind: 'journal.establish_predecessor',
       user_id: ctx.userId,
-      agent_id: establishedBy,
+      agent_id: callerAgent,
       decision: 'allow',
       reason: reason ?? 'predecessor lineage established',
       details: { heir, predecessor },
@@ -1031,13 +1064,14 @@ export const JOURNAL_TOOLS: RegisteredTool[] = [
     group: 'opencore',
     definition: {
       name: 'journal_establish_predecessor',
-      description: 'Admin/owner only. Declare that heir_agent_id is the legitimate successor of predecessor_agent_id, authorizing journal_recall(inherit_from=predecessor_agent_id) calls made AS heir_agent_id. Typical use: after a model upgrade (claude-opus-4-6 → claude-opus-4-7), the operator establishes the lineage so the new agent can read its predecessor\'s journal continuity. Lineage edges are per-user_id; revoke by passing revoke=true (the row is kept and marked revoked, preserving the audit trail). Without an active edge, inherit_from is refused — by default ZERO cross-agent journal reads.',
+      description: 'Admin/owner only. Declare that heir_agent_id is the legitimate successor of predecessor_agent_id, authorizing journal_recall(inherit_from=predecessor_agent_id) calls made AS heir_agent_id. Typical use: after a model upgrade (claude-opus-4-6 → claude-opus-4-7), the operator establishes the lineage so the new agent can read its predecessor\'s journal continuity. Lineage edges are per-user_id. Pass revoke=true to revoke an existing edge — the row is kept and marked revoked_at/revoked_by so the audit trail of past authorizations is preserved. Without an active edge, inherit_from is refused — by default ZERO cross-agent journal reads.',
       inputSchema: {
         type: 'object',
         properties: {
           heir_agent_id:        { type: 'string', description: 'The agent that gains read access to its predecessor\'s journal. Format: ^[A-Za-z0-9_:.\\-]{1,128}$.' },
           predecessor_agent_id: { type: 'string', description: 'The agent whose journal becomes readable by the heir. Must differ from heir_agent_id. Same format constraint.' },
-          reason:               { type: 'string', description: 'Operator note explaining why this lineage is valid (e.g. "model upgrade 4-6 → 4-7"). Max 500 chars.' },
+          reason:               { type: 'string', description: 'Operator note explaining why this lineage is established or revoked. Max 500 chars.' },
+          revoke:               { type: 'boolean', description: 'If true, revoke the existing lineage edge (UPDATE revoked_at, revoked_by; row kept for audit). Default false (establish).' },
         },
         required: ['heir_agent_id', 'predecessor_agent_id'],
       },

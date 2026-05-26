@@ -21,38 +21,60 @@ import { PROACTIVE_TOOLS } from '../mcp/proactive-tools.js';
 const byName = Object.fromEntries(PROACTIVE_TOOLS.map((t) => [t.definition.name, t.handler] as const));
 
 // ─── turn_context ─────────────────────────────────────────────────────
+// Audit fix v0.1.2: the handler takes camelCase (userMessage) plus an
+// optional conversationId, and returns prependContext + channelsActive +
+// tokensUsedChars + suggestionTriggers. Re-typed to match.
 export interface TurnContextInput {
-  user_message?: string;
+  userMessage: string;
+  conversationId?: string;
   channels?: string[];
   max_chars?: number;
 }
 export interface TurnContextOutput {
-  context: string;
-  channels_loaded: string[];
-  total_chars: number;
+  prependContext: string;
+  channelsActive: string[];
+  tokensUsedChars: number;
+  suggestionTriggers?: string[];
 }
 export const turnContext = bridgeHandler<TurnContextInput, TurnContextOutput>(byName['turn_context']);
 
 // ─── turn_after ───────────────────────────────────────────────────────
+// Audit fix v0.1.2: the facade originally declared user_message /
+// assistant_message and saved_memories / journal_entries / insights, but
+// the real tool takes userMessage / agentReply / failed / importance /
+// tags and reports captured / capturedId / cultivated / synthesized /
+// reasonsSkipped. Re-typed to match the handler.
 export interface TurnAfterInput {
-  user_message: string;
-  assistant_message: string;
+  userMessage: string;
+  agentReply: string;
+  conversationId?: string;
+  failed?: boolean;
+  importance?: number;
+  tags?: string[];
 }
 export interface TurnAfterOutput {
-  saved_memories?: number;
-  journal_entries?: number;
-  insights?: string[];
+  captured: boolean;
+  capturedId?: string;
+  cultivated?: boolean;
+  synthesized?: boolean;
+  reasonsSkipped?: string[];
 }
 export const turnAfter = bridgeHandler<TurnAfterInput, TurnAfterOutput>(byName['turn_after']);
 
 // ─── compact_checkpoint ───────────────────────────────────────────────
+// Audit fix v0.1.2: the facade originally promised a conversation-summary
+// envelope but the handler takes the raw messages array (it scans for the
+// structured signal prefix itself), plus an optional customInstructions
+// note and agentId override. Re-typed to match.
 export interface CompactCheckpointInput {
-  conversation_summary: string;
-  turns_covered?: number;
-  last_user_intent?: string;
+  messages: Array<{ role: string; content: string }>;
+  customInstructions?: string;
+  agentId?: string;
 }
 export interface CompactCheckpointOutput {
-  saved: boolean;
-  checkpoint_id?: string;
+  persisted: boolean;
+  reason?: string;
+  entries?: number;
+  arc?: string;
 }
 export const compactCheckpoint = bridgeHandler<CompactCheckpointInput, CompactCheckpointOutput>(byName['compact_checkpoint']);

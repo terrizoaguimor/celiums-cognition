@@ -20,9 +20,12 @@ import { ATLAS_TOOLS } from '../mcp/atlas-tools.js';
 const byName = Object.fromEntries(ATLAS_TOOLS.map((t) => [t.definition.name, t.handler] as const));
 
 // ─── atlas_ask ────────────────────────────────────────────────────────
+// Audit fix v0.1.2: atlas_ask is single-turn / stateless — the handler
+// ignores conversation_id entirely. Dropped from the facade type so
+// integrators are not misled into thinking conversation state is
+// supported here. For multi-turn use atlas_chat.
 export interface AtlasAskInput {
   prompt: string;
-  conversation_id?: string;
   max_tokens?: number;
 }
 export interface AtlasAskOutput {
@@ -35,9 +38,11 @@ export interface AtlasAskOutput {
 export const atlasAsk = bridgeHandler<AtlasAskInput, AtlasAskOutput>(byName['atlas_ask']);
 
 // ─── atlas_chat ───────────────────────────────────────────────────────
+// Audit fix v0.1.2: atlas_chat builds its request body without a
+// conversation_id — multi-turn state is carried by the `messages`
+// array the caller passes. Dropped from the facade type to match.
 export interface AtlasChatInput {
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
-  conversation_id?: string;
   max_tokens?: number;
   system?: string;
 }

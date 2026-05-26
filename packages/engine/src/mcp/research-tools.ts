@@ -87,9 +87,13 @@ CREATE INDEX IF NOT EXISTS research_sessions_project_idx ON research_sessions (p
 
 -- ── Sources (NotebookLM-core) ─────────────────────────────────────────
 -- The user's own uploaded material: pasted text, fetched URLs, text files.
--- ZERO-KNOWLEDGE: this lives entirely in the user's OWN Postgres. It never
--- leaves their machine — that is the moat. Retrieval is Postgres FTS (no
--- pgvector dependency, no external embedding calls).
+-- STORAGE is local — sources, chunks, and FTS index all live in the user's
+-- OWN Postgres. Retrieval is Postgres FTS (no pgvector dependency, no
+-- external embedding calls). SYNTHESIS, however, can forward chunks to
+-- the configured CELIUMS_LLM_* endpoint when the operator explicitly
+-- opts in via CELIUMS_RESEARCH_ALLOW_EXTERNAL_LLM=true. Default is
+-- local-extractive (no LLM, no network). See research_synthesize for
+-- the user-facing dichotomy.
 CREATE TABLE IF NOT EXISTS research_sources (
   id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
   project_id   TEXT NOT NULL REFERENCES research_projects (id) ON DELETE CASCADE,
@@ -509,7 +513,7 @@ export const RESEARCH_TOOLS: RegisteredTool[] = [
     group: 'ai',
     definition: {
       name: 'research_search',
-      description: 'Real-time federated knowledge search (research_search v2 — replaces the retired universal_knowledge raw-dump). Fans out across 10 curated public APIs (PubMed, Europe PMC, ClinicalTrials, OpenFDA, OpenAlex, Crossref, arXiv, Semantic Scholar, Wikipedia, Wikidata), deduplicates cross-source by DOI/title, and fuses with Reciprocal Rank Fusion so multi-source consensus ranks highest. A query-domain router selects the relevant APIs automatically. Returns ranked results with name, display_name, description, category (source), relevance score, plus authors/year/doi/url/consensus. Use to locate evidence before synthesize.',
+      description: 'Federated knowledge search proxy. This tool POSTs the query to the configured CELIUMS_SEARCH_URL backend (POST /v1/search), which is the component responsible for the actual fan-out across public scientific APIs (PubMed, Europe PMC, ClinicalTrials, OpenFDA, OpenAlex, Crossref, arXiv, Semantic Scholar, Wikipedia, Wikidata), DOI/title deduplication, and Reciprocal Rank Fusion. This file is the thin client; it does not implement those operations locally. Without CELIUMS_SEARCH_URL set, the tool returns a clear error explaining how to enable it. Returns ranked results with name, display_name, description, category (source), relevance score, plus authors/year/doi/url/consensus when the backend provides them.',
       inputSchema: {
         type: 'object',
         properties: {

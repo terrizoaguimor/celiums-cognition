@@ -35,16 +35,27 @@ export interface WriteProjectCreateOutput {
 export const writeProjectCreate = bridgeHandler<WriteProjectCreateInput, WriteProjectCreateOutput>(byName['write_project_create']);
 
 // ─── write_project_get ────────────────────────────────────────────────
+// Audit fix v0.1.2: the prior shape promised a full `scenes` array but the
+// handler returns a project envelope with `characters`, `scenes_count`,
+// `words_so_far`, and a `recent_scenes` slice. Re-typed to match.
 export interface WriteProjectGetInput {
   project_id: string;
 }
 export interface WriteProjectGetOutput {
-  id: string;
-  title: string;
-  premise?: string;
-  genre?: string;
-  characters: Array<{ id: string; name: string }>;
-  scenes: Array<{ id: string; title: string; order: number }>;
+  project: {
+    id: string;
+    title: string;
+    premise?: string;
+    genre?: string;
+    pov?: string;
+    setting?: string;
+    created_at: string;
+    updated_at?: string;
+  };
+  characters: Array<{ id: string; name: string; role?: string; archetype?: string }>;
+  scenes_count: number;
+  words_so_far: number;
+  recent_scenes: Array<{ id: string; title?: string; position?: number; word_count?: number }>;
 }
 export const writeProjectGet = bridgeHandler<WriteProjectGetInput, WriteProjectGetOutput>(byName['write_project_get']);
 
@@ -103,12 +114,14 @@ export interface WriteContinuityCheckOutput {
 export const writeContinuityCheck = bridgeHandler<WriteContinuityCheckInput, WriteContinuityCheckOutput>(byName['write_continuity_check']);
 
 // ─── write_export ─────────────────────────────────────────────────────
+// Audit fix v0.1.2: format JSON was advertised in the facade type but
+// the handler unconditionally returns markdown. Type narrowed to match.
 export interface WriteExportInput {
   project_id: string;
-  format?: 'markdown' | 'json';
+  format?: 'markdown';
 }
 export interface WriteExportOutput {
-  format: string;
+  format: 'markdown';
   content: string;
 }
 export const writeExport = bridgeHandler<WriteExportInput, WriteExportOutput>(byName['write_export']);

@@ -244,7 +244,11 @@ const handleContinuityCheck: McpToolHandler = async (args, ctx) => {
     [projectId, target.position, scope],
   )).rows;
   const characters = (await pool.query(
-    `SELECT name, role, archetype, secrets_known_at_chapter, physical_description
+    // Audit fix v0.1.2: voice_sample was missing from the SELECT even
+    // though the tool description and the system prompt both refer to
+    // it for voice-drift detection. Without it, the LLM had no ground
+    // truth for that check.
+    `SELECT name, role, archetype, secrets_known_at_chapter, physical_description, voice_sample
        FROM write_characters WHERE project_id=$1`,
     [projectId],
   )).rows;
@@ -416,7 +420,7 @@ export const WRITE_TOOLS: RegisteredTool[] = [
     group: 'ai',
     definition: {
       name: 'write_continuity_check',
-      description: 'Signature feature: structural continuity check using the configured open-source model (CELIUMS_LLM_MODEL, routed via Atlas — never a closed model). Loads the target scene, prior 20 scenes, all characters (with their secrets_known_at_chapter and voice samples), and worldbuilding rules. Outputs a JSON list of issues: secret-leak, description-drift, timeline conflict, worldbuilding violation, voice drift. Each issue includes severity, scene_position, description, and a suggested_fix. NO other writing tool does this — Sudowrite/Grammarly/ProWritingAid are line-by-line, this is structural.',
+      description: 'Signature feature: structural continuity check against the configured LLM (whatever endpoint CELIUMS_LLM_* points at — no in-code restriction on provider). Loads the target scene, prior 20 scenes, all characters (with their secrets_known_at_chapter, physical_description, and voice_sample), and worldbuilding rules. Outputs a JSON list of issues: secret-leak, description-drift, timeline conflict, worldbuilding violation, voice drift. Each issue includes severity, scene_position, description, and a suggested_fix. Distinct from Sudowrite/Grammarly/ProWritingAid which are line-by-line — this one is structural across the whole manuscript.',
       inputSchema: {
         type: 'object',
         properties: {

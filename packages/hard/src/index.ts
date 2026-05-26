@@ -136,7 +136,7 @@ export default createCognitionPlugin({
   migrationsDir: MIGRATIONS_DIR,
   enableUiRoutes: true,
   uiStaticDir: UI_STATIC_DIR,
-  pluginVersion: "0.1.1",
+  pluginVersion: "0.1.2",
   bootstrap: async (_engineCfg, _api) => {
     // The shared adapter only calls this when the local listeners (5432,
     // 6333, 6379, 9200) are NOT responding. setup() runs `docker

@@ -221,11 +221,16 @@ export async function classifyOnce(
     const parsed = extractJsonFromResponse(rawResponse);
     return { parsed, rawResponse, modelUsed: modelName, refused: parsed === null };
   } catch (err) {
+    // Audit fix v0.1.2: the catch path previously returned refused:false,
+    // contradicting the docstring that says refused is true whenever the
+    // result lacks a parsed JSON verdict. Callers fall back to the rules-
+    // based assessment in either case (network error, timeout, decline,
+    // non-JSON), so reporting refused:true keeps the contract consistent.
     return {
       parsed: null,
       rawResponse: err instanceof Error ? err.message : String(err),
       modelUsed: modelName,
-      refused: false,
+      refused: true,
     };
   }
 }

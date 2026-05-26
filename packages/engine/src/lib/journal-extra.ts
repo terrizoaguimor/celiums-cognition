@@ -61,40 +61,46 @@ export interface JournalRecallOutput {
 export const journalRecall = bridgeHandler<JournalRecallInput, JournalRecallOutput>(byName['journal_recall']);
 
 // ─── journal_arc ──────────────────────────────────────────────────────
+// Audit fix v0.1.2: the handler reads `window` (last_week|last_month|all)
+// and `max_entries`, not `question`/`entry_type`/`limit`/`inherit_from`.
+// Re-typed to match.
 export interface JournalArcInput {
-  question: string;
-  entry_type?: string;
-  limit?: number;
-  inherit_from?: string;
+  window?: 'last_week' | 'last_month' | 'all';
+  max_entries?: number;
 }
 
 export interface JournalArcOutput {
-  arc: string;
-  entries_consulted: number;
-  agent_id?: string;
+  narrative: string;
+  contradictions: Array<{ a: string; b: string; reason: string }>;
+  outliers: string[];
+  confidence: number;
 }
 
 export const journalArc = bridgeHandler<JournalArcInput, JournalArcOutput>(byName['journal_arc']);
 
 // ─── journal_introspect ───────────────────────────────────────────────
+// Audit fix v0.1.2: the handler takes `scope` (recent|all), not
+// entry_type/limit. Output is `answer` + `entries_referenced` +
+// `hallucination_risk`. Re-typed.
 export interface JournalIntrospectInput {
   question: string;
-  entry_type?: string;
-  limit?: number;
+  scope?: 'recent' | 'all';
 }
 
 export interface JournalIntrospectOutput {
   answer: string;
-  entries_consulted: number;
-  citations: string[];
+  entries_referenced: number;
+  hallucination_risk: 'low' | 'medium' | 'high';
 }
 
 export const journalIntrospect = bridgeHandler<JournalIntrospectInput, JournalIntrospectOutput>(byName['journal_introspect']);
 
 // ─── journal_dialogue ─────────────────────────────────────────────────
+// Audit fix v0.1.2: the handler requires `user_response`, not
+// `user_message`. Renamed to match the wire contract.
 export interface JournalDialogueInput {
   entry_id: string;
-  user_message: string;
+  user_response: string;
 }
 
 export interface JournalDialogueOutput {

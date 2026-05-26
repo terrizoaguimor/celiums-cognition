@@ -1,6 +1,6 @@
 {
   "name": "@celiumsai/cognition",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Persistent emotional memory for OpenClaw agents — ethics gate, SHA-chained journal, PAD-circadian limbic, hybrid retrieval (Postgres + Qdrant + Valkey + OpenSearch).",
   "license": "Apache-2.0",

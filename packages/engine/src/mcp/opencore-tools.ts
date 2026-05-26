@@ -8,11 +8,13 @@
 // Copyright 2026 Celiums Solutions LLC
 
 /**
- * @celiums/memory MCP — OpenCore tools (6 tools, no external deps)
+ * @celiums/memory MCP — OpenCore tools (7 tools)
  *
- * The floor of the super software. Six tools, each with a unique purpose,
- * no overlap, no duplication. Brutal complexity in the back end → simple
- * surface for the user.
+ * The floor of the super software. Six core tools, each with a unique
+ * purpose, no overlap; plus ethics_trace which is appended later in this
+ * file (it lives here because it shares the same dispatcher group, even
+ * though it pulls in the ethics pipeline). Brutal complexity in the back
+ * end → simple surface for the user.
  *
  *   1. forage    — search the knowledge biome (5K curated modules)
  *   2. absorb    — load a single knowledge module by name
@@ -20,14 +22,19 @@
  *   4. map_network — browse the knowledge biome by category
  *   5. remember  — store an emotional memory (PAD + importance + decay)
  *   6. recall    — semantic recall of past memories
+ *   7. ethics_trace — run the ethics pipeline against a string + persist
+ *                     the audit row (appended at L615 via OPENCORE_TOOLS.push)
+ *
+ * The first six have no external deps; ethics_trace pulls in the ethics
+ * engine + (optionally) the configured LLM endpoint for Layer C.
  *
  * Removed 2026-04-11 (redundant with memory + git):
  *   - context_save/load/list  → use remember/recall with structured tags
  *   - snapshot_save/load/list → use git
  *
  * Each tool delegates to its underlying engine (ModuleStore for knowledge,
- * MemoryEngine for memory). Errors are thrown — the dispatcher converts
- * them to JSON-RPC errors.
+ * MemoryEngine for memory, ethics module for ethics_trace). Errors are
+ * thrown — the dispatcher converts them to JSON-RPC errors.
  */
 
 import type { ModuleStore } from '../lib/module-store.js';
@@ -315,7 +322,7 @@ export const OPENCORE_TOOLS: RegisteredTool[] = [
     group: 'opencore',
     definition: {
       name: 'recall',
-      description: 'Search persistent memory using semantic + emotional relevance ranking. Returns memories sorted by relevance, recency, and emotional resonance. Searches current project + global memories by default. Use to retrieve previously stored facts, decisions, preferences, or context. Behavior: performs hybrid retrieval (vector similarity + full-text + emotional resonance), applies spaced activation recall (SAR) filtering, returns ranked results with content, type, importance, and relevance score.',
+      description: 'Search persistent memory using semantic + emotional relevance ranking. Returns memories sorted by relevance, recency, and emotional resonance. Searches current project + global memories by default. Use to retrieve previously stored facts, decisions, preferences, or context. Behavior: performs hybrid retrieval (vector similarity + full-text + emotional resonance), applies spaced activation recall (SAR) filtering, returns ranked results with content, type, importance, and relevance score. Side effect: on every successful call, the user_profiles row for ctx.userId has last_interaction bumped to NOW(), interaction_count incremented, and the current-hour activity_hist bucket incremented (best-effort; failures are silent and do not block the recall). This is the engine\'s circadian/limbic tracking, not a separate analytics surface.',
       inputSchema: {
         type: 'object',
         properties: {

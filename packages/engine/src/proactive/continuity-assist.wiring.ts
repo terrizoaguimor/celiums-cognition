@@ -155,9 +155,15 @@ export class ContinuityAssistWiring {
   }
 
   /**
-   * Warm the embedder (and indirectly the DB pool) on boot. Atlas review
-   * §7: removes the cold-start cliff that would otherwise blow the 2s
-   * turn_context budget on the first request to a freshly-spawned pod.
+   * Best-effort warmup of the embedder and DB pool on boot. Aimed at the
+   * cold-start cliff that otherwise blows the 2s turn_context budget on
+   * the first request to a freshly-spawned pod. NOT a readiness gate —
+   * failures here (no network to the embedding endpoint, pool not yet
+   * connected, etc.) are swallowed so the pod can still serve, just
+   * slower for the first turn. Callers MUST NOT use the return of this
+   * function to gate traffic. The embedder is invoked with a single-
+   * space string; some embedding providers reject whitespace-only inputs
+   * — that rejection is also swallowed here.
    */
   async warmup(): Promise<void> {
     try {
@@ -166,7 +172,7 @@ export class ContinuityAssistWiring {
         this.deps.pool.query('SELECT 1'),
       ]);
     } catch {
-      // Non-fatal: a cold pod can still serve, just slower for the first turn.
+      // Non-fatal — see docstring. No retry, no escalation.
     }
   }
 
