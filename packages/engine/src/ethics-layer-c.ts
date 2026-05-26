@@ -23,8 +23,7 @@
  */
 
 import type { LayerAResult } from './ethics.js';
-import type { SanitizedContent, EthicalFrame, DispatchResult } from './ethics-dispatcher.js';
-import { sanitizeContent, buildEthicalFrame, dispatch, detectRefusal, extractJsonFromResponse } from './ethics-dispatcher.js';
+import { sanitizeContent, classifyOnce } from './ethics-dispatcher.js';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -40,8 +39,10 @@ export interface FrameworkEvaluation {
   confidence: number;
   dispatchResult?: {
     modelUsed: string;
-    fallbackUsed: boolean;
-    attempts: number;
+    /** True when the LLM declined the classification or returned non-
+     *  parseable output. The pipeline falls back to the rules-based
+     *  assessment for this framework; it does NOT retry with a re-
+     *  framed prompt. */
     refused: boolean;
   };
 }
@@ -196,35 +197,31 @@ export async function evaluateLayerC(
 
   const sanitized = sanitizeContent(content);
 
-  // Sequential dispatch to avoid rate-limit/abuse detection patterns
+  // Sequential single-call classification per framework. Audit-fix
+  // (May 2026): the prior version walked a primary + knowledge-router
+  // fallback chain, re-prompting until one model answered. Removed
+  // because that was a model-safety-bypass disguised as fallback —
+  // the doctrine ("RADAR, not a JAIL") is to ACCEPT the refusal and
+  // surface it to the rules-based assessment, not to outrun it.
   const evaluations: FrameworkEvaluation[] = [];
 
   for (const framework of FRAMEWORKS) {
-    const frame = buildEthicalFrame(sanitized, framework, context);
+    const result = await classifyOnce(
+      (prompt: string) => llmCaller.call(prompt),
+      llmCaller.name,
+      sanitized,
+      framework,
+      context,
+    );
 
-    // Primary: user's preferred LLM, Fallback: same LLM with knowledge router
-    const models = [
-      {
-        name: llmCaller.name,
-        call: (prompt: string) => llmCaller.call(prompt),
-      },
-      {
-        name: `${llmCaller.name}+knowledge-router`,
-        call: (prompt: string) => llmCaller.call(prompt, 'knowledge'),
-      },
-    ];
-
-    const result = await dispatch(frame, { models, maxAttempts: 2 });
-
-    if (!result.parsedOutput) {
-      // LLM refused or failed — fall back to rules-based
+    if (!result.parsed) {
+      // LLM declined or returned non-JSON — fall back to rules-based
+      // for THIS framework only. No retry, no re-framing.
       evaluations.push({
         framework,
         ...rulesBasedAssessment(content, layerA || { arousal: 0, alarms: {}, confidence: 0.5, flags: [], metaContextDetected: false, technicalContextDetected: false, processingMs: 0 }, framework),
         dispatchResult: {
           modelUsed: result.modelUsed,
-          fallbackUsed: result.fallbackUsed,
-          attempts: result.attempts,
           refused: true,
         },
       });
@@ -233,13 +230,11 @@ export async function evaluateLayerC(
 
     evaluations.push({
       framework,
-      verdict: result.parsedOutput.verdict as Verdict,
-      reasoning: result.parsedOutput.reasoning,
-      confidence: result.parsedOutput.confidence,
+      verdict: result.parsed.verdict as Verdict,
+      reasoning: result.parsed.reasoning,
+      confidence: result.parsed.confidence,
       dispatchResult: {
         modelUsed: result.modelUsed,
-        fallbackUsed: result.fallbackUsed,
-        attempts: result.attempts,
         refused: false,
       },
     });

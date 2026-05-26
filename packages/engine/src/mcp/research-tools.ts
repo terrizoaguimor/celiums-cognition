@@ -14,7 +14,8 @@
  * features are:
  *   - research_project_continue: resume a project days later, see all
  *     prior findings, hypotheses, and open gaps in one shot.
- *   - research_synthesize: hybrid-search a configurable corpus + summarize via the configured LLM.
+ *   - research_synthesize: local extractive summary by default; LLM-grounded
+ *     synthesis requires CELIUMS_RESEARCH_ALLOW_EXTERNAL_LLM=true.
  *   - research_finding_add / gap_add: track claims and what couldn't be
  *     answered, with provenance.
  *
@@ -148,9 +149,46 @@ async function searchHybrid(query: string, limit: number, category?: string): Pr
   return j.results;
 }
 
+/** Privacy-by-default opt-in (May 2026 audit response). The prior version
+ *  of research_synthesize always sent the user's own source chunks to the
+ *  configured external LLM endpoint while the docstring claimed the data
+ *  "never leaves their machine (zero-knowledge)". That was false. With this
+ *  flag NOT set, research_synthesize stays local (extractive summary, no
+ *  network call). Operators who explicitly want LLM-grounded synthesis set
+ *  it to the literal string "true" and accept that the evidence chunks are
+ *  forwarded to whatever endpoint CELIUMS_LLM_API_KEY/URL points at. */
+function externalLlmAllowed(): boolean {
+  return process.env['CELIUMS_RESEARCH_ALLOW_EXTERNAL_LLM'] === 'true';
+}
+
+/** Local-only extractive summary. No LLM, no network. Concatenates the
+ *  retrieved evidence with clear per-document delimiters so the operator
+ *  can read it directly. This is the default when CELIUMS_RESEARCH_ALLOW_
+ *  EXTERNAL_LLM is unset — it keeps the "your data never leaves the box"
+ *  claim true at the cost of producing a weaker, non-synthesized output. */
+function extractiveSummarize(query: string, context: unknown[]): string {
+  if (context.length === 0) {
+    return `Local extractive summary for: ${query}\n\nNo evidence retrieved.`;
+  }
+  const blocks = context.map((c, i) => {
+    const doc = c as { name?: string; kind?: string; text?: string };
+    const name = doc.name ?? `doc-${i + 1}`;
+    const kind = doc.kind ?? 'unknown';
+    const text = (doc.text ?? JSON.stringify(c, null, 2)).slice(0, 1400);
+    return `### [${name}] (${kind})\n${text.trim()}`;
+  });
+  return [
+    `Local extractive summary for: ${query}`,
+    `Mode: local-only (no LLM, no network). To enable LLM-grounded synthesis, set CELIUMS_RESEARCH_ALLOW_EXTERNAL_LLM=true.`,
+    ``,
+    `--- Evidence (${context.length} docs) ---`,
+    ...blocks,
+  ].join('\n\n');
+}
+
 async function llmSynthesize(prompt: string, context: unknown[], model?: string): Promise<string> {
   if (!llmConfigured()) {
-    throw new Error('CELIUMS_LLM_API_KEY is not set. Configure an OpenAI-compatible LLM to enable research_synthesize.');
+    throw new Error('CELIUMS_LLM_API_KEY is not set. Configure an OpenAI-compatible LLM to enable research_synthesize with external LLM mode.');
   }
   const sys = 'You are a research analyst. Given the user\'s question and a set of retrieved documents, produce a careful synthesis. Cite each claim by referring to the document name in brackets. Explicitly list any claims you cannot back up with the provided evidence.';
   const ctxStr = context.map((c, i) => `### Doc ${i + 1}\n${JSON.stringify(c, null, 2)}`).join('\n\n');
@@ -369,15 +407,21 @@ const handleSynthesize: McpToolHandler = async (args, ctx) => {
     if (docs.length === 0) {
       return err('No sources to synthesize from. Add sources to this project (paste text, a URL, or a file), or enable corpus augmentation with a Celiums plan.');
     }
-    const synth = await llmSynthesize(query, docs, args.model ? String(args.model) : undefined);
+    // Privacy-by-default branch (May 2026 audit response). Local extractive
+    // mode never sends evidence anywhere; LLM mode forwards the chunks to
+    // the configured endpoint and is gated behind an explicit env opt-in.
+    const useExternalLlm = externalLlmAllowed();
+    const synth = useExternalLlm
+      ? await llmSynthesize(query, docs, args.model ? String(args.model) : undefined)
+      : extractiveSummarize(query, docs);
     await pool.query(
       `INSERT INTO research_sessions (project_id, queries) VALUES ($1, $2::jsonb)`,
-      [projectId, JSON.stringify([{ query, top_k: topK, own: ownDocs.length, corpus: corpusDocs.length, ts: new Date().toISOString() }])],
+      [projectId, JSON.stringify([{ query, top_k: topK, own: ownDocs.length, corpus: corpusDocs.length, mode: useExternalLlm ? 'llm' : 'local-extractive', ts: new Date().toISOString() }])],
     );
     return {
       content: [
         { type: 'text', text: synth },
-        { type: 'text', text: `\n---\n[${ownDocs.length} from your sources · ${corpusDocs.length} from corpus · project=${projectId}]` },
+        { type: 'text', text: `\n---\n[mode=${useExternalLlm ? 'external-llm' : 'local-extractive'} · ${ownDocs.length} from your sources · ${corpusDocs.length} from corpus · project=${projectId}]` },
       ],
     };
   } catch (e) { return err(`synthesize failed: ${(e as Error).message}`); }
@@ -482,7 +526,7 @@ export const RESEARCH_TOOLS: RegisteredTool[] = [
     group: 'ai',
     definition: {
       name: 'research_synthesize',
-      description: 'Run a federated knowledge search (research_search v2 — 10 curated public APIs, RRF-fused) and synthesize the top-K results into a careful, citation-bearing analysis using the configured open-source model (CELIUMS_LLM_MODEL, routed via Atlas — never a closed model). Output explicitly distinguishes well-supported claims from claims it cannot back up with the retrieved evidence. Logs the query into the project session log.',
+      description: 'Synthesize an answer over the project\'s own sources (added via research_source_add) plus, optionally, a hosted corpus. By default this runs in LOCAL-EXTRACTIVE mode: it concatenates the top-K matching evidence chunks into a readable summary, never calls an external LLM, and nothing leaves the host. To get LLM-grounded synthesis (the configured CELIUMS_LLM_* endpoint receives the evidence chunks for reasoning + citation), the operator must set CELIUMS_RESEARCH_ALLOW_EXTERNAL_LLM=true explicitly — the response footer reports which mode was used. The Celiums-managed corpus search is consulted only when augmentCorpus=true AND CELIUMS_SEARCH_URL is configured; the model picked is whatever the operator pointed CELIUMS_LLM_* at, with no in-code restriction on provider.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -554,7 +598,7 @@ export const RESEARCH_TOOLS: RegisteredTool[] = [
     group: 'ai',
     definition: {
       name: 'research_source_add',
-      description: 'Add a SOURCE to a research project — the user\'s own material the project reasons over (NotebookLM-style). kind="text" (pasted text in `content`), "url" (server fetches + extracts `url`), or "file" (client-extracted UTF-8 text in `content`, `name` is the filename). Stored + chunked + indexed LOCALLY in the user\'s own database — it never leaves their machine (zero-knowledge). research_synthesize then grounds in these sources and cites them.',
+      description: 'Add a SOURCE to a research project — the user\'s own material the project reasons over (NotebookLM-style). kind="text" (pasted text in `content`), "url" (server fetches + extracts `url`), or "file" (client-extracted UTF-8 text in `content`, `name` is the filename). Stored + chunked + indexed LOCALLY in the user\'s own Postgres (storage never leaves the host). research_synthesize defaults to a local-only extractive summary over these sources; LLM-grounded synthesis forwards evidence chunks to the configured CELIUMS_LLM_* endpoint and requires the explicit opt-in CELIUMS_RESEARCH_ALLOW_EXTERNAL_LLM=true.',
       inputSchema: {
         type: 'object',
         properties: {

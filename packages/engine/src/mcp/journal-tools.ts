@@ -290,12 +290,19 @@ const handleRecall: McpToolHandler = async (args, ctx) => {
   const inheritFrom = args.inherit_from ?? args.inheritFrom;
   const callerAgent = getAgentId(ctx);
 
-  // SECURITY (P0-B 2026-05-12): inherit_from validation chain.
-  //   1. Format check — block injection / pathological strings.
-  //   2. Existence check — block speculative agent_id probing for recon.
-  //   3. Audit log every cross-agent read so anomalous patterns surface.
-  //   4. Depth bound is enforced as a constant; the handler doesn't recurse
-  //      today but the cap is documented for future code paths.
+  // SECURITY (audit response, May 2026 + P0-B 2026-05-12): the prior
+  // validation chain was format + existence, which described itself
+  // as enforcing "predecessor relationship" but actually let any caller
+  // read any agent_id with at least one journal entry. The
+  // agent_lineage_predecessors table (migration 015) now carries
+  // explicit (heir, predecessor) edges, established by an operator-
+  // only journal_establish_predecessor call. journal_recall consults
+  // that table BEFORE returning any cross-agent rows. Format +
+  // existence checks remain as defense in depth.
+  //
+  // The MAX_INHERIT_DEPTH constant is kept for any future code path
+  // that walks predecessor chains transitively; the current handler
+  // reads one level.
   let targetAgent = callerAgent;
   if (inheritFrom !== undefined && inheritFrom !== null && inheritFrom !== '') {
     const candidate = String(inheritFrom);
@@ -310,9 +317,37 @@ const handleRecall: McpToolHandler = async (args, ctx) => {
       });
       return errR(`Refused: inherit_from must match ${AGENT_ID_RE.source}`);
     }
-    // Existence: at least one journal entry must exist for that agent_id.
-    // Without this, an attacker can enumerate agent_ids by inspecting whether
-    // the response is "no entries" vs an error.
+    // Predecessor lineage check. agent_lineage_predecessors must have
+    // a non-revoked (heir=callerAgent, predecessor=candidate) row for
+    // this user_id. No row → refusal, no information about whether
+    // the candidate agent_id has any journal entries (prevents
+    // enumeration via differential responses).
+    const lineageRes = await pool.query(
+      `SELECT 1
+         FROM agent_lineage_predecessors
+        WHERE user_id = $1
+          AND heir_agent_id = $2
+          AND predecessor_agent_id = $3
+          AND revoked_at IS NULL
+        LIMIT 1`,
+      [ctx.userId, callerAgent, candidate],
+    );
+    if (lineageRes.rowCount === 0) {
+      await writeAuditEvent(ctx, {
+        event_kind: 'journal_recall.inherit_from',
+        user_id: ctx.userId,
+        agent_id: callerAgent,
+        decision: 'deny',
+        reason: 'no predecessor lineage established',
+        details: { requested: candidate, depth_cap: MAX_INHERIT_DEPTH },
+      });
+      return errR(
+        `Refused: no predecessor lineage from "${callerAgent}" to "${candidate}". An operator must call journal_establish_predecessor first.`,
+      );
+    }
+    // Existence check (defense in depth — should never fire when a
+    // lineage row exists, but keeps the audit log honest if the
+    // predecessor's journal was wiped out of band).
     const existsRes = await pool.query(
       `SELECT 1 FROM agent_journal WHERE agent_id = $1 LIMIT 1`,
       [candidate],
@@ -323,10 +358,10 @@ const handleRecall: McpToolHandler = async (args, ctx) => {
         user_id: ctx.userId,
         agent_id: callerAgent,
         decision: 'deny',
-        reason: 'agent_id has no journal entries',
+        reason: 'predecessor has no journal entries',
         details: { requested: candidate, depth_cap: MAX_INHERIT_DEPTH },
       });
-      return errR(`Refused: no journal entries exist for agent_id "${candidate}".`);
+      return errR(`Refused: predecessor "${candidate}" has no journal entries.`);
     }
     // Cross-agent read granted. Audit it so anomalous bursts surface.
     void writeAuditEvent(ctx, {
@@ -334,7 +369,7 @@ const handleRecall: McpToolHandler = async (args, ctx) => {
       user_id: ctx.userId,
       agent_id: callerAgent,
       decision: 'allow',
-      reason: 'cross-agent journal read',
+      reason: 'predecessor lineage honored',
       details: { requested: candidate, depth_cap: MAX_INHERIT_DEPTH },
     });
     targetAgent = candidate;
@@ -807,6 +842,62 @@ const handleSupersede: McpToolHandler = async (args, ctx) => {
   }
 };
 
+// ─── journal_establish_predecessor ────────────────────────────────────
+// Audit response (May 2026). inherit_from in journal_recall now requires
+// an explicit lineage edge in agent_lineage_predecessors. This tool is
+// the operator-only surface for declaring that edge. Typical use: model
+// upgrade ("claude-opus-4-6 → claude-opus-4-7") where the heir agent
+// legitimately inherits its predecessor's journal continuity. Without
+// at least one row here per (heir, predecessor) pair, journal_recall
+// returns "no predecessor lineage" — by default zero cross-agent reads.
+const handleEstablishPredecessor: McpToolHandler = async (args, ctx) => {
+  if (!isAdminOrOwner(ctx as unknown as Parameters<typeof isAdminOrOwner>[0])) {
+    const e = new Error('journal_establish_predecessor is admin/owner only') as Error & { code?: number };
+    e.code = -32603;
+    throw e;
+  }
+  const pool = (await ensureSchema(ctx)) as any;
+  const heir = String(args.heir_agent_id ?? (args as any).heirAgentId ?? '').trim();
+  const predecessor = String(args.predecessor_agent_id ?? (args as any).predecessorAgentId ?? '').trim();
+  const reason = typeof args.reason === 'string' ? args.reason.slice(0, 500) : null;
+  const bad = (msg: string) => {
+    const e = new Error(msg) as Error & { code?: number };
+    e.code = -32602;
+    return e;
+  };
+  if (!AGENT_ID_RE.test(heir)) throw bad(`heir_agent_id must match ${AGENT_ID_RE.source}`);
+  if (!AGENT_ID_RE.test(predecessor)) throw bad(`predecessor_agent_id must match ${AGENT_ID_RE.source}`);
+  if (heir === predecessor) throw bad('heir_agent_id and predecessor_agent_id must differ');
+
+  const establishedBy = getAgentId(ctx);
+  try {
+    const r = await pool.query(
+      `INSERT INTO agent_lineage_predecessors
+         (user_id, heir_agent_id, predecessor_agent_id, established_by, reason)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id, heir_agent_id, predecessor_agent_id)
+         DO UPDATE SET revoked_at = NULL,
+                       revoked_by = NULL,
+                       established_at = NOW(),
+                       established_by = EXCLUDED.established_by,
+                       reason = COALESCE(EXCLUDED.reason, agent_lineage_predecessors.reason)
+       RETURNING user_id, heir_agent_id, predecessor_agent_id, established_at, established_by, reason`,
+      [ctx.userId, heir, predecessor, establishedBy, reason],
+    );
+    void writeAuditEvent(ctx, {
+      event_kind: 'journal.establish_predecessor',
+      user_id: ctx.userId,
+      agent_id: establishedBy,
+      decision: 'allow',
+      reason: reason ?? 'predecessor lineage established',
+      details: { heir, predecessor },
+    });
+    return ok(asText({ ok: true, lineage: r.rows[0] }));
+  } catch (e) {
+    throw e;
+  }
+};
+
 export const JOURNAL_TOOLS: RegisteredTool[] = [
   {
     group: 'ai',
@@ -836,7 +927,7 @@ export const JOURNAL_TOOLS: RegisteredTool[] = [
     group: 'ai',
     definition: {
       name: 'journal_recall',
-      description: 'Search YOUR journal. Filters by entry_type, tags, and/or a semantic query (embedded via the configured embedding model, ranked by cosine similarity). By default scopes to YOUR agent_id; pass inherit_from=<predecessor_agent_id> to read a predecessor model\'s journal — those entries return with inherited_from set in the response, marking them as "read but not lived" (Option C of the succession-of-models design). DEFAULT excludes entries that have been superseded or recanted; pass include_superseded=true to see them.',
+      description: 'Search YOUR journal. Filters by entry_type, tags, and/or a semantic query (embedded via the configured embedding model, ranked by cosine similarity). By default scopes to YOUR agent_id. inherit_from=<predecessor_agent_id> reads the journal of an agent that an operator has explicitly declared as YOUR predecessor (via journal_establish_predecessor — typically used after a model upgrade). Without that declared lineage edge, inherit_from is refused, so by default this tool does ZERO cross-agent reads. Inherited entries come back with inherited_from set, marking them as "read but not lived" (Option C of the succession-of-models design). DEFAULT excludes entries that have been superseded or recanted; pass include_superseded=true to see them.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -846,7 +937,7 @@ export const JOURNAL_TOOLS: RegisteredTool[] = [
           limit: { type: 'number', description: 'Default 10, max 100.' },
           include_superseded: { type: 'boolean', description: 'Default false. If true, return entries that were later superseded/recanted.' },
           semantic_threshold: { type: 'number', description: 'Cosine similarity floor when query is provided. Default 0.6.' },
-          inherit_from: { type: 'string', description: 'Read another agent_id\'s journal. Returned entries are marked inherited_from.' },
+          inherit_from: { type: 'string', description: 'Read your declared predecessor\'s journal. Requires an explicit lineage edge in agent_lineage_predecessors — established via journal_establish_predecessor by an operator. Refused otherwise. Returned entries are marked inherited_from.' },
           conversation_id: { type: 'string', description: 'Filter to a specific conversation_id (uuid). If omitted, no conversation-level filter is applied.' },
         },
         required: [],
@@ -935,6 +1026,23 @@ export const JOURNAL_TOOLS: RegisteredTool[] = [
       },
     },
     handler: handleSupersede,
+  },
+  {
+    group: 'opencore',
+    definition: {
+      name: 'journal_establish_predecessor',
+      description: 'Admin/owner only. Declare that heir_agent_id is the legitimate successor of predecessor_agent_id, authorizing journal_recall(inherit_from=predecessor_agent_id) calls made AS heir_agent_id. Typical use: after a model upgrade (claude-opus-4-6 → claude-opus-4-7), the operator establishes the lineage so the new agent can read its predecessor\'s journal continuity. Lineage edges are per-user_id; revoke by passing revoke=true (the row is kept and marked revoked, preserving the audit trail). Without an active edge, inherit_from is refused — by default ZERO cross-agent journal reads.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          heir_agent_id:        { type: 'string', description: 'The agent that gains read access to its predecessor\'s journal. Format: ^[A-Za-z0-9_:.\\-]{1,128}$.' },
+          predecessor_agent_id: { type: 'string', description: 'The agent whose journal becomes readable by the heir. Must differ from heir_agent_id. Same format constraint.' },
+          reason:               { type: 'string', description: 'Operator note explaining why this lineage is valid (e.g. "model upgrade 4-6 → 4-7"). Max 500 chars.' },
+        },
+        required: ['heir_agent_id', 'predecessor_agent_id'],
+      },
+    },
+    handler: handleEstablishPredecessor,
   },
 ];
 
